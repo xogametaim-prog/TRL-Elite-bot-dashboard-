@@ -1,30 +1,41 @@
 import discord
 from discord.ext import commands
 import asyncio
+import logging
+import sys
 from config import TOKEN
 from database import تهيئة_قاعدة_البيانات
 
-# إعداد صلاحيات البوت
-intents = discord.Intents.default()
-intents.message_content = True
-intents.members = True
+# إعداد نظام تسجيل الأخطاء
+logging.basicConfig(level=logging.INFO, stream=sys.stdout)
 
-bot = commands.Bot(command_prefix="!", intents=intents)
+# إعداد الصلاحيات (intents)
+الصلاحيات = discord.Intents.default()
+الصلاحيات.message_content = True
+الصلاحيات.members = True
 
-async def load_cogs():
-    await bot.load_extension("cogs.الاقتصاد")
-    await bot.load_extension("cogs.الفرق")
+البوت = commands.Bot(command_prefix="!", intents=الصلاحيات)
 
-@bot.event
+async def تحميل_المجلدات():
+    """تحميل ملفات الأوامر من مجلد cogs"""
+    await البوت.load_extension("cogs.الاقتصاد")
+    await البوت.load_extension("cogs.الفرق")
+
+@البوت.event
 async def on_ready():
-    print(f"✅ البوت دخل باسم {bot.user}")
-    await load_cogs()
-    await bot.tree.sync()
+    print(f"✅ البوت دخل باسم {البوت.user}")
+    await تحميل_المجلدات()
+    await البوت.tree.sync()
     print("✅ تم مزامنة جميع الأوامر")
 
-async def main():
+async def الرئيسي():
     await تهيئة_قاعدة_البيانات()
-    await bot.start(TOKEN)
+    await البوت.start(TOKEN)  # هذا السطر يبقي البوت متصلاً
 
 if __name__ == "__main__":
-    asyncio.run(main())
+    try:
+        asyncio.run(الرئيسي())
+    except discord.LoginFailure:
+        print("❌ فشل تسجيل الدخول. تأكد من متغير البيئة DISCORD_TOKEN")
+    except Exception as e:
+        print(f"❌ خطأ غير متوقع: {e}")
