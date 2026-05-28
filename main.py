@@ -7,15 +7,26 @@ import random
 import time
 import os
 import sys
+import threading
+from flask import Flask
 
-# ========== التوكن من متغير البيئة ==========
+# ========== Flask server for Render ==========
+app = Flask(__name__)
+
+@app.route('/')
+def home():
+    return "Bot is running!"
+
+def run_flask():
+    app.run(host='0.0.0.0', port=8080)
+
+# ========== Token from environment ==========
 TOKEN = os.getenv("DISCORD_TOKEN")
-
 if TOKEN is None:
     print("❌ DISCORD_TOKEN environment variable not set.")
     sys.exit(1)
 
-# ========== إعدادات اللعبة ==========
+# ========== Game settings ==========
 START_COINS = 1000
 START_CREDITS = 0
 DAILY_COINS = 500
@@ -27,7 +38,21 @@ MAX_TEAM_NAME = 20
 DAY_SECONDS = 86400
 HOUR_SECONDS = 3600
 
-# ========== قاعدة البيانات ==========
+# Base HP for each team
+START_TEAM_HP = 100
+
+# Weapon mapping: item_id -> damage
+WEAPON_DAMAGE = {
+    2: 20,   # Iron Sword
+    7: 40,   # Dragon Fang
+    9: 15,   # Lightning Boots (attack boost)
+    12: 25,  # Elven Bow
+    16: 35,  # Wolf Companion
+    23: 30,  # Fire Staff
+}
+DEFAULT_PUNCH_DAMAGE = 5
+
+# ========== Database ==========
 DB_PATH = "game_data.db"
 
 def run_sync(func, *args, **kwargs):
@@ -48,8 +73,9 @@ def init_db_sync():
         user_id TEXT,
         slot INTEGER,
         name TEXT DEFAULT '',
+        health INTEGER DEFAULT ?,
         PRIMARY KEY (user_id, slot)
-    )''')
+    )''', (START_TEAM_HP,))
     c.execute('''CREATE TABLE IF NOT EXISTS inventory (
         user_id TEXT,
         item_id INTEGER,
@@ -66,31 +92,31 @@ def init_db_sync():
     c.execute("SELECT COUNT(*) FROM shop")
     if c.fetchone()[0] == 0:
         items = [
-            (1, "🍎 تفاحة سحرية", 100, 5, "تستعيد 20 صحة"),
-            (2, "🗡️ سيف حديدي", 250, 10, "+10 هجوم"),
-            (3, "🛡️ درع فولاذي", 200, 8, "+8 دفاع"),
-            (4, "💎 ياقوتة", 500, 20, "حجر كريم"),
-            (5, "🧪 جرعة شفاء", 80, 3, "تشفى 50 صحة"),
-            (6, "📜 درع قديم", 300, 12, "مهارة جديدة"),
-            (7, "🐉 ناب تنين", 1000, 40, "أسلحة أسطورية"),
-            (8, "👑 تاج الملوك", 2000, 80, "سلطة ملكية"),
-            (9, "⚡ حذاء البرق", 400, 15, "+10 سرعة"),
-            (10, "🔮 كرة بلورية", 350, 14, "تكشف الأسرار"),
-            (11, "🧥 عباءة الظلال", 450, 18, "تخفي"),
-            (12, "🏹 قوس إلف", 600, 25, "هجوم بعيد"),
-            (13, "🍄 عيش غراب ذهبي", 150, 6, "تأثير عشوائي"),
-            (14, "🧙 قبعة الساحر", 700, 28, "+15 سحر"),
-            (15, "⛏️ فأس قزم", 500, 20, "تعدين"),
-            (16, "🐺 رفيق ذئب", 1200, 50, "مرافق قتالي"),
-            (17, "🕯️ شمعة الحقيقة", 180, 7, "كشف الأكاذيب"),
-            (18, "🧩 مفتاح غامض", 250, 10, "فتح أبواب سرية"),
-            (19, "💀 كتاب الموتى", 1500, 60, "استحضار"),
-            (20, "🧪 إكسير الحياة", 3000, 120, "زيادة العمر"),
-            (21, "🎣 صنارة صيد", 200, 8, "صيد السمك"),
-            (22, "🏔️ درع الجليد", 800, 32, "مقاومة البرد"),
-            (23, "🔥 عصا النار", 900, 36, "كرات نارية"),
-            (24, "🌀 تميمة الريح", 550, 22, "تحكم بالرياح"),
-            (25, "🌟 شظية نجم", 400, 16, "أمنيات")
+            (1, "🍎 Magic Apple", 100, 5, "Restores 20 HP (healing)"),
+            (2, "🗡️ Iron Sword", 250, 10, "+10 Attack damage"),
+            (3, "🛡️ Steel Shield", 200, 8, "+8 Defense (reduces damage)"),
+            (4, "💎 Ruby", 500, 20, "Precious gem (no combat)"),
+            (5, "🧪 Healing Potion", 80, 3, "Heals 50 HP (consumable)"),
+            (6, "📜 Ancient Scroll", 300, 12, "Teaches new skill"),
+            (7, "🐉 Dragon Fang", 1000, 40, "40 damage weapon"),
+            (8, "👑 Crown of Kings", 2000, 80, "Royal authority"),
+            (9, "⚡ Lightning Boots", 400, 15, "+15 damage"),
+            (10, "🔮 Crystal Ball", 350, 14, "Reveals secrets"),
+            (11, "🧥 Cloak of Shadows", 450, 18, "Invisibility"),
+            (12, "🏹 Elven Bow", 600, 25, "25 damage ranged"),
+            (13, "🍄 Golden Mushroom", 150, 6, "Random effect"),
+            (14, "🧙 Wizard's Hat", 700, 28, "+15 Magic"),
+            (15, "⛏️ Dwarven Pickaxe", 500, 20, "Mining"),
+            (16, "🐺 Wolf Companion", 1200, 50, "35 damage companion"),
+            (17, "🕯️ Candle of Truth", 180, 7, "Reveals lies"),
+            (18, "🧩 Mysterious Key", 250, 10, "Opens secret doors"),
+            (19, "💀 Necronomicon", 1500, 60, "Summons"),
+            (20, "🧪 Elixir of Life", 3000, 120, "Extends life"),
+            (21, "🎣 Fishing Rod", 200, 8, "Catches rare fish"),
+            (22, "🏔️ Frost Armor", 800, 32, "Cold resistance"),
+            (23, "🔥 Fire Staff", 900, 36, "30 damage fireballs"),
+            (24, "🌀 Wind Talisman", 550, 22, "Wind control"),
+            (25, "🌟 Star Fragment", 400, 16, "Makes wishes")
         ]
         c.executemany("INSERT INTO shop VALUES (?,?,?,?,?)", items)
     conn.commit()
@@ -107,7 +133,7 @@ async def get_user(user_id):
         row = c.fetchone()
         if row is None:
             c.execute("INSERT INTO users (user_id, coins, credits) VALUES (?, ?, ?)", (user_id, START_COINS, START_CREDITS))
-            c.execute("INSERT OR IGNORE INTO teams (user_id, slot) VALUES (?,0), (?,1)", (user_id, user_id))
+            c.execute("INSERT OR IGNORE INTO teams (user_id, slot, health) VALUES (?,0,?), (?,1,?)", (user_id, START_TEAM_HP, user_id, START_TEAM_HP))
             conn.commit()
             return {"coins": START_COINS, "credits": START_CREDITS, "last_daily": 0, "last_hourly": 0, "active_team": 0}
         return {"coins": row[0], "credits": row[1], "last_daily": row[2], "last_hourly": row[3], "active_team": row[4]}
@@ -123,24 +149,40 @@ async def update_user(user_id, **kwargs):
         conn.close()
     await run_sync(_update)
 
-async def get_team(user_id, slot):
+async def get_team(user_id, slot, include_health=False):
     def _get():
         conn = sqlite3.connect(DB_PATH)
         c = conn.cursor()
-        c.execute("SELECT name FROM teams WHERE user_id = ? AND slot = ?", (user_id, slot))
-        row = c.fetchone()
-        conn.close()
-        return row[0] if row else ""
+        if include_health:
+            c.execute("SELECT name, health FROM teams WHERE user_id = ? AND slot = ?", (user_id, slot))
+            row = c.fetchone()
+            conn.close()
+            return (row[0], row[1]) if row else ("", START_TEAM_HP)
+        else:
+            c.execute("SELECT name FROM teams WHERE user_id = ? AND slot = ?", (user_id, slot))
+            row = c.fetchone()
+            conn.close()
+            return row[0] if row else ""
     return await run_sync(_get)
 
 async def set_team(user_id, slot, name):
     def _set():
         conn = sqlite3.connect(DB_PATH)
         c = conn.cursor()
-        c.execute("INSERT OR REPLACE INTO teams (user_id, slot, name) VALUES (?, ?, ?)", (user_id, slot, name))
+        c.execute("INSERT OR REPLACE INTO teams (user_id, slot, name, health) VALUES (?, ?, ?, COALESCE((SELECT health FROM teams WHERE user_id=? AND slot=?), ?))",
+                  (user_id, slot, name, user_id, slot, START_TEAM_HP))
         conn.commit()
         conn.close()
     await run_sync(_set)
+
+async def update_team_health(user_id, slot, new_health):
+    def _update():
+        conn = sqlite3.connect(DB_PATH)
+        c = conn.cursor()
+        c.execute("UPDATE teams SET health = ? WHERE user_id = ? AND slot = ?", (new_health, user_id, slot))
+        conn.commit()
+        conn.close()
+    await run_sync(_update)
 
 async def get_all_users():
     def _get():
@@ -194,23 +236,41 @@ async def get_all_shop():
         return [{"id": r[0], "name": r[1], "coinPrice": r[2], "creditPrice": r[3], "desc": r[4]} for r in rows]
     return await run_sync(_get)
 
-# ========== إعداد البوت ==========
+# ========== Helper: get best weapon damage for user ==========
+async def get_best_weapon_damage(user_id):
+    inv = await get_inventory(user_id)
+    best = DEFAULT_PUNCH_DAMAGE
+    for item_id, qty in inv:
+        if qty > 0 and item_id in WEAPON_DAMAGE:
+            best = max(best, WEAPON_DAMAGE[item_id])
+    return best
+
+# ========== Bot setup ==========
 intents = discord.Intents.default()
 intents.message_content = True
 intents.members = True
 
 bot = commands.Bot(command_prefix="!", intents=intents)
 
-# ========== الأوامر ==========
-@bot.tree.command(name="رصيدي", description="عرض رصيدك")
-async def balance(interaction: discord.Interaction):
-    user = await get_user(str(interaction.user.id))
-    embed = discord.Embed(title=f"محفظة {interaction.user.display_name}", color=0x00AE86)
-    embed.add_field(name="🪙 العملات", value=user["coins"], inline=True)
-    embed.add_field(name="💎 الرصيد المميز", value=user["credits"], inline=True)
+# ========== Commands ==========
+@bot.tree.command(name="help", description="Show all bot commands")
+async def help_command(interaction: discord.Interaction):
+    embed = discord.Embed(title="🤖 Bot Commands", color=0x5865F2)
+    embed.add_field(name="📊 Economy", value="`/balance`, `/daily`, `/hourly`, `/work`, `/leaderboard`", inline=False)
+    embed.add_field(name="🛒 Shop", value="`/shop`, `/buy`, `/inventory`", inline=False)
+    embed.add_field(name="👥 Teams", value="`/setteam`, `/activeteam`, `/myteam`", inline=False)
+    embed.add_field(name="⚔️ Combat", value="`/attack @user` - Attack another player's active team", inline=False)
     await interaction.response.send_message(embed=embed)
 
-@bot.tree.command(name="يومي", description="مكافأة يومية")
+@bot.tree.command(name="balance", description="Show your coins and credits")
+async def balance(interaction: discord.Interaction):
+    user = await get_user(str(interaction.user.id))
+    embed = discord.Embed(title=f"{interaction.user.display_name}'s Wallet", color=0x00AE86)
+    embed.add_field(name="🪙 Coins", value=user["coins"], inline=True)
+    embed.add_field(name="💎 Credits", value=user["credits"], inline=True)
+    await interaction.response.send_message(embed=embed)
+
+@bot.tree.command(name="daily", description="Daily reward")
 async def daily(interaction: discord.Interaction):
     uid = str(interaction.user.id)
     user = await get_user(uid)
@@ -219,12 +279,12 @@ async def daily(interaction: discord.Interaction):
         remaining = DAY_SECONDS - (now - user["last_daily"])
         h = remaining // 3600
         m = (remaining % 3600) // 60
-        await interaction.response.send_message(f"⏳ انتظر {h} ساعة {m} دقيقة", ephemeral=True)
+        await interaction.response.send_message(f"⏳ Already claimed. Try in {h}h {m}m.", ephemeral=True)
         return
     await update_user(uid, last_daily=now, coins=user["coins"]+DAILY_COINS, credits=user["credits"]+DAILY_CREDITS)
-    await interaction.response.send_message(f"🎁 +{DAILY_COINS} عملة و +{DAILY_CREDITS} رصيد")
+    await interaction.response.send_message(f"🎁 +{DAILY_COINS} coins, +{DAILY_CREDITS} credits")
 
-@bot.tree.command(name="ساعي", description="مكافأة كل ساعة")
+@bot.tree.command(name="hourly", description="Hourly reward")
 async def hourly(interaction: discord.Interaction):
     uid = str(interaction.user.id)
     user = await get_user(uid)
@@ -232,53 +292,53 @@ async def hourly(interaction: discord.Interaction):
     if now - user["last_hourly"] < HOUR_SECONDS:
         remaining = HOUR_SECONDS - (now - user["last_hourly"])
         m = remaining // 60
-        await interaction.response.send_message(f"⏳ انتظر {m} دقيقة", ephemeral=True)
+        await interaction.response.send_message(f"⏳ Try again in {m} minutes.", ephemeral=True)
         return
     await update_user(uid, last_hourly=now, coins=user["coins"]+HOURLY_COINS)
-    await interaction.response.send_message(f"⏲️ +{HOURLY_COINS} عملة")
+    await interaction.response.send_message(f"⏲️ +{HOURLY_COINS} coins")
 
-@bot.tree.command(name="اعمل", description="اعمل لكسب عملات")
+@bot.tree.command(name="work", description="Work for coins")
 async def work(interaction: discord.Interaction):
     earn = random.randint(WORK_MIN, WORK_MAX)
     uid = str(interaction.user.id)
     user = await get_user(uid)
     await update_user(uid, coins=user["coins"]+earn)
-    await interaction.response.send_message(f"💼 كسبت {earn} عملة")
+    await interaction.response.send_message(f"💼 You earned {earn} coins")
 
-@bot.tree.command(name="الاغنياء", description="أغنى 10 لاعبين")
+@bot.tree.command(name="leaderboard", description="Top 10 richest players")
 async def leaderboard(interaction: discord.Interaction):
     rows = await get_all_users()
     sorted_rows = sorted(rows, key=lambda x: x[1], reverse=True)[:10]
     if not sorted_rows:
-        await interaction.response.send_message("لا يوجد مستخدمون")
+        await interaction.response.send_message("No users yet.")
         return
     desc = ""
     for i, (uid, coins) in enumerate(sorted_rows):
         user = await bot.fetch_user(int(uid))
-        name = user.display_name if user else "مجهول"
+        name = user.display_name if user else "Unknown"
         desc += f"{i+1}. **{name}** — {coins} 🪙\n"
-    embed = discord.Embed(title="🏆 قائمة الأغنياء", description=desc, color=0xFFD700)
+    embed = discord.Embed(title="🏆 Leaderboard", description=desc, color=0xFFD700)
     await interaction.response.send_message(embed=embed)
 
-@bot.tree.command(name="المتجر", description="عرض المتجر")
+@bot.tree.command(name="shop", description="View shop")
 async def shop(interaction: discord.Interaction):
     items = await get_all_shop()
-    embed = discord.Embed(title="🛒 المتجر", description="اشتري بـ /اشتري [الرقم] [عملات/رصيد] [كمية]", color=0x3498db)
+    embed = discord.Embed(title="🛒 Shop", description="Use `/buy [id] [coins/credits] [qty]`", color=0x3498db)
     for item in items[:10]:
         embed.add_field(name=f"{item['id']}. {item['name']}", value=f"🪙 {item['coinPrice']} | 💎 {item['creditPrice']}", inline=True)
     await interaction.response.send_message(embed=embed)
 
-@bot.tree.command(name="اشتري", description="شراء سلعة")
+@bot.tree.command(name="buy", description="Buy an item")
 @app_commands.choices(currency=[
-    app_commands.Choice(name="عملات", value="coins"),
-    app_commands.Choice(name="رصيد مميز", value="credits")
+    app_commands.Choice(name="Coins", value="coins"),
+    app_commands.Choice(name="Credits", value="credits")
 ])
 async def buy(interaction: discord.Interaction, item_id: int, currency: str, quantity: int = 1):
     if quantity < 1:
         quantity = 1
     item = await get_shop_item(item_id)
     if not item:
-        await interaction.response.send_message("❌ رقم سلعة خاطئ", ephemeral=True)
+        await interaction.response.send_message("❌ Invalid item ID.", ephemeral=True)
         return
     uid = str(interaction.user.id)
     user = await get_user(uid)
@@ -291,69 +351,116 @@ async def buy(interaction: discord.Interaction, item_id: int, currency: str, qua
     cost = price * quantity
     if currency == "coins":
         if user["coins"] < cost:
-            await interaction.response.send_message(f"❌ تحتاج {cost} عملة", ephemeral=True)
+            await interaction.response.send_message(f"❌ Need {cost} coins.", ephemeral=True)
             return
         await update_user(uid, coins=user["coins"] - cost)
     else:
         if user["credits"] < cost:
-            await interaction.response.send_message(f"❌ تحتاج {cost} رصيد", ephemeral=True)
+            await interaction.response.send_message(f"❌ Need {cost} credits.", ephemeral=True)
             return
         await update_user(uid, credits=user["credits"] - cost)
     received = quantity * multiplier
     await add_inventory(uid, item_id, received)
-    await interaction.response.send_message(f"✅ اشتريت {received} × {item['name']}")
+    await interaction.response.send_message(f"✅ Bought {received} × {item['name']}")
 
-@bot.tree.command(name="مخزني", description="عرض مخزونك")
+@bot.tree.command(name="inventory", description="View your items")
 async def inventory(interaction: discord.Interaction):
     uid = str(interaction.user.id)
     inv = await get_inventory(uid)
     if not inv:
-        await interaction.response.send_message("📦 مخزونك فارغ", ephemeral=True)
+        await interaction.response.send_message("📦 Inventory empty.", ephemeral=True)
         return
     desc = ""
     for item_id, qty in inv[:10]:
         item = await get_shop_item(item_id)
         if item:
             desc += f"• {item['name']} x{qty}\n"
-    embed = discord.Embed(title=f"مخزون {interaction.user.display_name}", description=desc, color=0x2ecc71)
+    embed = discord.Embed(title=f"{interaction.user.display_name}'s Inventory", description=desc, color=0x2ecc71)
     await interaction.response.send_message(embed=embed)
 
-@bot.tree.command(name="تعيين_فريق", description="تسمية فريقك")
+@bot.tree.command(name="setteam", description="Name your team")
 @app_commands.choices(slot=[
-    app_commands.Choice(name="الفريق الأول", value=1),
-    app_commands.Choice(name="الفريق الثاني", value=2)
+    app_commands.Choice(name="Team 1", value=1),
+    app_commands.Choice(name="Team 2", value=2)
 ])
-async def set_team(interaction: discord.Interaction, slot: int, name: str):
+async def set_team_cmd(interaction: discord.Interaction, slot: int, name: str):
     if len(name) > MAX_TEAM_NAME:
         name = name[:MAX_TEAM_NAME]
     uid = str(interaction.user.id)
     await set_team(uid, slot-1, name)
-    await interaction.response.send_message(f"✅ تم تسمية الفريق {slot} → {name}")
+    await interaction.response.send_message(f"✅ Team {slot} renamed to **{name}**")
 
-@bot.tree.command(name="تفعيل_فريق", description="تفعيل فريق")
+@bot.tree.command(name="activeteam", description="Activate a team")
 @app_commands.choices(slot=[
-    app_commands.Choice(name="الفريق الأول", value=1),
-    app_commands.Choice(name="الفريق الثاني", value=2)
+    app_commands.Choice(name="Team 1", value=1),
+    app_commands.Choice(name="Team 2", value=2)
 ])
-async def activate_team(interaction: discord.Interaction, slot: int):
+async def activate_team_cmd(interaction: discord.Interaction, slot: int):
     uid = str(interaction.user.id)
     await update_user(uid, active_team=slot-1)
-    team_name = await get_team(uid, slot-1) or "بدون اسم"
-    await interaction.response.send_message(f"🔁 تم تفعيل الفريق {slot} ({team_name})")
+    team_name = await get_team(uid, slot-1) or "Unnamed"
+    await interaction.response.send_message(f"🔁 Activated Team {slot} ({team_name})")
 
-@bot.tree.command(name="فرقي", description="عرض فرقك")
-async def my_teams(interaction: discord.Interaction):
+@bot.tree.command(name="myteam", description="Show your teams")
+async def my_teams_cmd(interaction: discord.Interaction):
     uid = str(interaction.user.id)
-    t1 = await get_team(uid, 0) or "غير محدد"
-    t2 = await get_team(uid, 1) or "غير محدد"
+    t1_name, t1_hp = await get_team(uid, 0, include_health=True)
+    t2_name, t2_hp = await get_team(uid, 1, include_health=True)
     user = await get_user(uid)
-    embed = discord.Embed(title=f"فرق {interaction.user.display_name}", color=0x9b59b6)
-    embed.add_field(name="الفريق الأول", value=t1, inline=False)
-    embed.add_field(name="الفريق الثاني", value=t2, inline=False)
-    embed.add_field(name="الفريق النشط", value=f"الفريق {user['active_team']+1}", inline=False)
+    embed = discord.Embed(title=f"{interaction.user.display_name}'s Teams", color=0x9b59b6)
+    embed.add_field(name="Team 1", value=f"Name: {t1_name or 'Not set'}\n❤️ HP: {t1_hp}", inline=False)
+    embed.add_field(name="Team 2", value=f"Name: {t2_name or 'Not set'}\n❤️ HP: {t2_hp}", inline=False)
+    embed.add_field(name="Active", value=f"Team {user['active_team']+1}", inline=False)
     await interaction.response.send_message(embed=embed)
 
-# ========== تشغيل البوت ==========
+# ========== Attack System ==========
+@bot.tree.command(name="attack", description="Attack another player's active team")
+async def attack(interaction: discord.Interaction, target: discord.Member):
+    attacker_id = str(interaction.user.id)
+    target_id = str(target.id)
+
+    if attacker_id == target_id:
+        await interaction.response.send_message("❌ You cannot attack yourself.", ephemeral=True)
+        return
+
+    # Get attacker's active team
+    attacker_data = await get_user(attacker_id)
+    attacker_slot = attacker_data["active_team"]
+    attacker_team_name, attacker_team_hp = await get_team(attacker_id, attacker_slot, include_health=True)
+
+    # Get target's active team
+    target_data = await get_user(target_id)
+    target_slot = target_data["active_team"]
+    target_team_name, target_team_hp = await get_team(target_id, target_slot, include_health=True)
+
+    if target_team_hp <= 0:
+        await interaction.response.send_message(f"❌ {target.display_name}'s team has already been defeated!", ephemeral=True)
+        return
+
+    # Calculate damage based on attacker's weapons
+    damage = await get_best_weapon_damage(attacker_id)
+    new_hp = max(0, target_team_hp - damage)
+
+    # Update target's team health
+    await update_team_health(target_id, target_slot, new_hp)
+
+    # Send notification to target (DM)
+    try:
+        await target.send(f"⚔️ **Your team `{target_team_name}` was attacked by {interaction.user.display_name}!**\n💥 Damage: {damage}\n❤️ HP left: {new_hp}")
+    except:
+        pass
+
+    # Response
+    embed = discord.Embed(title="⚔️ Attack Result", color=0xFF4500)
+    embed.add_field(name="Attacker", value=f"{interaction.user.display_name} (Team: {attacker_team_name})", inline=False)
+    embed.add_field(name="Target", value=f"{target.display_name} (Team: {target_team_name})", inline=False)
+    embed.add_field(name="Damage Dealt", value=str(damage), inline=True)
+    embed.add_field(name="Remaining HP", value=str(new_hp), inline=True)
+    if new_hp == 0:
+        embed.add_field(name="💀 Result", value="Team has been defeated!", inline=False)
+    await interaction.response.send_message(embed=embed)
+
+# ========== Bot startup with Flask thread ==========
 @bot.event
 async def on_ready():
     print(f"✅ Bot online as {bot.user}")
@@ -364,6 +471,12 @@ async def main():
     print("🚀 Starting bot...")
     await init_db()
     print("✅ Database ready")
+
+    # Start Flask in a background thread
+    flask_thread = threading.Thread(target=run_flask, daemon=True)
+    flask_thread.start()
+    print("✅ Flask web server started on port 8080")
+
     await bot.start(TOKEN)
 
 if __name__ == "__main__":
