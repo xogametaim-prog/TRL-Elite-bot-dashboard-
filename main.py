@@ -10,323 +10,269 @@ import sys
 import traceback
 import threading
 from flask import Flask
+from datetime import datetime
 
-# ========== تسجيل الأخطاء ==========
-def log_error(msg, exc=True):
-    print(f"\n❌ ERROR: {msg}")
-    if exc:
-        traceback.print_exc()
+# ========== خادم ويب لـ Render ==========
+تطبيق_فلاسك = Flask(__name__)
 
-print("🚀 Starting bot...")
+@تطبيق_فلاسك.route('/')
+def الصفحة_الرئيسية():
+    return "البوت شغال!"
 
-try:
-    # ========== Flask ==========
-    flask_app = Flask(__name__)
-    @flask_app.route('/')
-    def home():
-        return "Bot is running!"
-    def run_flask():
-        flask_app.run(host='0.0.0.0', port=8080)
-    
-    # ========== Token ==========
-    TOKEN = os.getenv("DISCORD_TOKEN")
-    if TOKEN is None:
-        log_error("DISCORD_TOKEN not set!", False)
-        sys.exit(1)
-    
-    # ========== Game Settings ==========
-    START_COINS, START_CREDITS, START_TEAM_HP = 1000, 0, 100
-    DAILY_COINS, DAILY_CREDITS = 500, 10
-    HOURLY_COINS = 100
-    WORK_MIN, WORK_MAX = 50, 200
-    DAY_SECONDS, HOUR_SECONDS = 86400, 3600
-    MAX_TEAM_NAME = 20
-    DEFAULT_PUNCH_DAMAGE = 5
-    WEAPON_DAMAGE = {2: 20, 7: 40, 9: 15, 12: 25, 16: 35, 23: 30}
-    
-    # ========== Database ==========
-    DB_PATH = "game_data.db"
-    
-    async def init_db():
-        async with aiosqlite.connect(DB_PATH) as db:
-            await db.execute('''CREATE TABLE IF NOT EXISTS users (
-                user_id TEXT PRIMARY KEY, coins INTEGER DEFAULT 1000,
-                credits INTEGER DEFAULT 0, last_daily INTEGER DEFAULT 0,
-                last_hourly INTEGER DEFAULT 0, active_team INTEGER DEFAULT 0)''')
-            await db.execute('''CREATE TABLE IF NOT EXISTS teams (
-                user_id TEXT, slot INTEGER, name TEXT DEFAULT '',
-                health INTEGER DEFAULT 100, PRIMARY KEY (user_id, slot))''')
-            await db.execute('''CREATE TABLE IF NOT EXISTS inventory (
-                user_id TEXT, item_id INTEGER, quantity INTEGER DEFAULT 0,
-                PRIMARY KEY (user_id, item_id))''')
-            await db.execute('''CREATE TABLE IF NOT EXISTS shop (
-                item_id INTEGER PRIMARY KEY, name TEXT, coin_price INTEGER,
-                credit_price INTEGER, description TEXT)''')
-            cursor = await db.execute("SELECT COUNT(*) FROM shop")
-            if (await cursor.fetchone())[0] == 0:
-                items = [(i, f"Item {i}", i*100, i//5, f"Desc {i}") for i in range(1, 26)]
-                await db.executemany("INSERT INTO shop VALUES (?,?,?,?,?)", items)
-            await db.commit()
-    
-    async def get_user(uid):
-        async with aiosqlite.connect(DB_PATH) as db:
-            async with db.execute("SELECT coins, credits, last_daily, last_hourly, active_team FROM users WHERE user_id=?", (uid,)) as c:
-                row = await c.fetchone()
-                if row is None:
-                    await db.execute("INSERT INTO users (user_id, coins, credits) VALUES (?,?,?)", (uid, START_COINS, START_CREDITS))
-                    await db.execute("INSERT OR IGNORE INTO teams VALUES (?,0,'',?), (?,1,'',?)", (uid, START_TEAM_HP, uid, START_TEAM_HP))
-                    await db.commit()
-                    return {"coins": START_COINS, "credits": START_CREDITS, "last_daily": 0, "last_hourly": 0, "active_team": 0}
-                return {"coins": row[0], "credits": row[1], "last_daily": row[2], "last_hourly": row[3], "active_team": row[4]}
-    
-    async def update_user(uid, **kwargs):
-        async with aiosqlite.connect(DB_PATH) as db:
-            for k, v in kwargs.items():
-                await db.execute(f"UPDATE users SET {k}=? WHERE user_id=?", (v, uid))
-            await db.commit()
-    
-    async def get_team(uid, slot, inc_health=False):
-        async with aiosqlite.connect(DB_PATH) as db:
-            if inc_health:
-                async with db.execute("SELECT name, health FROM teams WHERE user_id=? AND slot=?", (uid, slot)) as c:
-                    row = await c.fetchone()
-                    return (row[0], row[1]) if row else ("", START_TEAM_HP)
-            else:
-                async with db.execute("SELECT name FROM teams WHERE user_id=? AND slot=?", (uid, slot)) as c:
-                    row = await c.fetchone()
-                    return row[0] if row else ""
-    
-    async def set_team(uid, slot, name):
-        async with aiosqlite.connect(DB_PATH) as db:
-            await db.execute("INSERT OR REPLACE INTO teams (user_id, slot, name, health) VALUES (?,?,?, COALESCE((SELECT health FROM teams WHERE user_id=? AND slot=?), ?))",
-                             (uid, slot, name, uid, slot, START_TEAM_HP))
-            await db.commit()
-    
-    async def update_team_health(uid, slot, hp):
-        async with aiosqlite.connect(DB_PATH) as db:
-            await db.execute("UPDATE teams SET health=? WHERE user_id=? AND slot=?", (hp, uid, slot))
-            await db.commit()
-    
-    async def get_all_users():
-        async with aiosqlite.connect(DB_PATH) as db:
-            async with db.execute("SELECT user_id, coins FROM users") as c:
-                return await c.fetchall()
-    
-    async def add_inventory(uid, iid, qty):
-        async with aiosqlite.connect(DB_PATH) as db:
-            await db.execute("INSERT INTO inventory VALUES (?,?,?) ON CONFLICT DO UPDATE SET quantity=quantity+?", (uid, iid, qty, qty))
-            await db.commit()
-    
-    async def get_inventory(uid):
-        async with aiosqlite.connect(DB_PATH) as db:
-            async with db.execute("SELECT item_id, quantity FROM inventory WHERE user_id=?", (uid,)) as c:
-                return await c.fetchall()
-    
-    async def get_shop_item(iid):
-        async with aiosqlite.connect(DB_PATH) as db:
-            async with db.execute("SELECT item_id, name, coin_price, credit_price, description FROM shop WHERE item_id=?", (iid,)) as c:
-                row = await c.fetchone()
-                return {"id": row[0], "name": row[1], "coinPrice": row[2], "creditPrice": row[3], "desc": row[4]} if row else None
-    
-    async def get_all_shop():
-        async with aiosqlite.connect(DB_PATH) as db:
-            async with db.execute("SELECT item_id, name, coin_price, credit_price, description FROM shop ORDER BY item_id") as c:
-                rows = await c.fetchall()
-                return [{"id": r[0], "name": r[1], "coinPrice": r[2], "creditPrice": r[3], "desc": r[4]} for r in rows]
-    
-    async def get_best_weapon(uid):
-        inv = await get_inventory(uid)
-        best = DEFAULT_PUNCH_DAMAGE
-        for iid, qty in inv:
-            if qty > 0 and iid in WEAPON_DAMAGE:
-                best = max(best, WEAPON_DAMAGE[iid])
-        return best
-    
-    # ========== Bot Setup ==========
-    intents = discord.Intents.default()
-    intents.message_content = True
-    intents.members = True
-    bot = commands.Bot(command_prefix="!", intents=intents)
-    
-    # ========== Commands ==========
-    @bot.tree.command(name="رصيدي", description="عرض رصيدك")
-    async def balance(interaction):
-        u = await get_user(str(interaction.user.id))
-        e = discord.Embed(title=f"محفظة {interaction.user.display_name}", color=0x00AE86)
-        e.add_field(name="🪙 عملات", value=u["coins"], inline=True)
-        e.add_field(name="💎 رصيد مميز", value=u["credits"], inline=True)
-        await interaction.response.send_message(embed=e)
-    
-    @bot.tree.command(name="يومي", description="مكافأة يومية")
-    async def daily(interaction):
-        uid = str(interaction.user.id)
-        u = await get_user(uid)
-        now = int(time.time())
-        if now - u["last_daily"] < DAY_SECONDS:
-            r = DAY_SECONDS - (now - u["last_daily"])
-            await interaction.response.send_message(f"⏳ انتظر {r//3600} ساعة {(r%3600)//60} دقيقة", ephemeral=True)
-            return
-        await update_user(uid, last_daily=now, coins=u["coins"]+DAILY_COINS, credits=u["credits"]+DAILY_CREDITS)
-        await interaction.response.send_message(f"🎁 +{DAILY_COINS} عملة +{DAILY_CREDITS} رصيد")
-    
-    @bot.tree.command(name="ساعي", description="مكافأة كل ساعة")
-    async def hourly(interaction):
-        uid = str(interaction.user.id)
-        u = await get_user(uid)
-        now = int(time.time())
-        if now - u["last_hourly"] < HOUR_SECONDS:
-            r = HOUR_SECONDS - (now - u["last_hourly"])
-            await interaction.response.send_message(f"⏳ انتظر {r//60} دقيقة", ephemeral=True)
-            return
-        await update_user(uid, last_hourly=now, coins=u["coins"]+HOURLY_COINS)
-        await interaction.response.send_message(f"⏲️ +{HOURLY_COINS} عملة")
-    
-    @bot.tree.command(name="اعمل", description="اعمل لكسب عملات")
-    async def work(interaction):
-        earn = random.randint(WORK_MIN, WORK_MAX)
-        uid = str(interaction.user.id)
-        u = await get_user(uid)
-        await update_user(uid, coins=u["coins"]+earn)
-        await interaction.response.send_message(f"💼 كسبت {earn} عملة")
-    
-    @bot.tree.command(name="الاغنياء", description="أغنى 10 لاعبين")
-    async def leaderboard(interaction):
-        rows = await get_all_users()
-        sorted_rows = sorted(rows, key=lambda x: x[1], reverse=True)[:10]
-        if not sorted_rows:
-            await interaction.response.send_message("لا يوجد مستخدمون")
-            return
-        desc = ""
-        for i, (uid, coins) in enumerate(sorted_rows):
-            u = await bot.fetch_user(int(uid))
-            desc += f"{i+1}. **{u.display_name if u else 'مجهول'}** — {coins} 🪙\n"
-        e = discord.Embed(title="🏆 قائمة الأغنياء", description=desc, color=0xFFD700)
-        await interaction.response.send_message(embed=e)
-    
-    @bot.tree.command(name="المتجر", description="عرض المتجر")
-    async def shop(interaction):
-        items = await get_all_shop()
-        e = discord.Embed(title="🛒 المتجر", color=0x3498db)
-        for it in items[:12]:
-            e.add_field(name=f"{it['id']}. {it['name']}", value=f"🪙 {it['coinPrice']} | 💎 {it['creditPrice']}", inline=True)
-        await interaction.response.send_message(embed=e)
-    
-    @bot.tree.command(name="اشتري", description="شراء سلعة")
-    @app_commands.choices(currency=[app_commands.Choice(name="عملات", value="coins"), app_commands.Choice(name="رصيد مميز", value="credits")])
-    async def buy(interaction, item_id: int, currency: str, quantity: int = 1):
-        if quantity < 1: quantity = 1
-        item = await get_shop_item(item_id)
-        if not item:
-            await interaction.response.send_message("❌ رقم خاطئ", ephemeral=True)
-            return
-        uid = str(interaction.user.id)
-        u = await get_user(uid)
-        if currency == "coins":
-            price, mult = item["coinPrice"], 1
-        else:
-            price, mult = item["creditPrice"], 2
-        cost = price * quantity
-        if currency == "coins":
-            if u["coins"] < cost:
-                await interaction.response.send_message(f"❌ تحتاج {cost} عملة", ephemeral=True)
-                return
-            await update_user(uid, coins=u["coins"]-cost)
-        else:
-            if u["credits"] < cost:
-                await interaction.response.send_message(f"❌ تحتاج {cost} رصيد", ephemeral=True)
-                return
-            await update_user(uid, credits=u["credits"]-cost)
-        received = quantity * mult
-        await add_inventory(uid, item_id, received)
-        await interaction.response.send_message(f"✅ اشتريت {received} × {item['name']}")
-    
-    @bot.tree.command(name="مخزني", description="عرض مخزونك")
-    async def inventory(interaction):
-        uid = str(interaction.user.id)
-        inv = await get_inventory(uid)
-        if not inv:
-            await interaction.response.send_message("📦 مخزونك فارغ", ephemeral=True)
-            return
-        desc = ""
-        for iid, qty in inv[:10]:
-            it = await get_shop_item(iid)
-            if it:
-                desc += f"• {it['name']} x{qty}\n"
-        e = discord.Embed(title=f"مخزون {interaction.user.display_name}", description=desc, color=0x2ecc71)
-        await interaction.response.send_message(embed=e)
-    
-    @bot.tree.command(name="تعيين_فريق", description="تسمية فريقك")
-    @app_commands.choices(slot=[app_commands.Choice(name="الفريق الأول", value=1), app_commands.Choice(name="الفريق الثاني", value=2)])
-    async def set_team(interaction, slot: int, name: str):
-        if len(name) > MAX_TEAM_NAME: name = name[:MAX_TEAM_NAME]
-        await set_team(str(interaction.user.id), slot-1, name)
-        await interaction.response.send_message(f"✅ تم تسمية الفريق {slot} → {name}")
-    
-    @bot.tree.command(name="تفعيل_فريق", description="تفعيل فريق")
-    @app_commands.choices(slot=[app_commands.Choice(name="الفريق الأول", value=1), app_commands.Choice(name="الفريق الثاني", value=2)])
-    async def activate_team(interaction, slot: int):
-        uid = str(interaction.user.id)
-        await update_user(uid, active_team=slot-1)
-        await interaction.response.send_message(f"🔁 تم تفعيل الفريق {slot}")
-    
-    @bot.tree.command(name="فرقي", description="عرض فرقك")
-    async def my_teams(interaction):
-        uid = str(interaction.user.id)
-        n1, h1 = await get_team(uid, 0, True)
-        n2, h2 = await get_team(uid, 1, True)
-        u = await get_user(uid)
-        e = discord.Embed(title=f"فرق {interaction.user.display_name}", color=0x9b59b6)
-        e.add_field(name="الفريق الأول", value=f"{n1 or 'غير محدد'}\n❤️ HP: {h1}", inline=False)
-        e.add_field(name="الفريق الثاني", value=f"{n2 or 'غير محدد'}\n❤️ HP: {h2}", inline=False)
-        e.add_field(name="الفريق النشط", value=f"الفريق {u['active_team']+1}", inline=False)
-        await interaction.response.send_message(embed=e)
-    
-    @bot.tree.command(name="هجوم", description="مهاجمة فريق خصم")
-    async def attack(interaction, target: discord.Member):
-        if target.id == interaction.user.id:
-            await interaction.response.send_message("❌ لا يمكنك مهاجمة نفسك", ephemeral=True)
-            return
-        aid = str(interaction.user.id)
-        tid = str(target.id)
-        ad = await get_user(aid)
-        td = await get_user(tid)
-        at, tt = ad["active_team"], td["active_team"]
-        an, _ = await get_team(aid, at, True)
-        tn, th = await get_team(tid, tt, True)
-        if th <= 0:
-            await interaction.response.send_message(f"❌ فريق {target.display_name} هُزم", ephemeral=True)
-            return
-        dmg = await get_best_weapon(aid)
-        new_hp = max(0, th - dmg)
-        await update_team_health(tid, tt, new_hp)
-        try:
-            await target.send(f"⚔️ فريقك {tn} هوجم من {interaction.user.display_name}!\n💥 ضرر: {dmg}\n❤️ HP: {new_hp}")
-        except: pass
-        await interaction.response.send_message(f"⚔️ هاجمت {target.display_name} وتسببت بـ {dmg} ضرر! (HP متبقي: {new_hp})")
-    
-    @bot.tree.command(name="help", description="عرض الأوامر")
-    async def help_cmd(interaction):
-        e = discord.Embed(title="🤖 الأوامر", color=0x5865F2)
-        e.add_field(name="💰 الاقتصاد", value="/رصيدي, /يومي, /ساعي, /اعمل, /الاغنياء", inline=False)
-        e.add_field(name="🛒 المتجر", value="/المتجر, /اشتري, /مخزني", inline=False)
-        e.add_field(name="👥 الفرق", value="/تعيين_فريق, /تفعيل_فريق, /فرقي", inline=False)
-        e.add_field(name="⚔️ القتال", value="/هجوم @لاعب", inline=False)
-        await interaction.response.send_message(embed=e)
-    
-    # ========== Events ==========
-    @bot.event
-    async def on_ready():
-        print(f"✅ Bot online: {bot.user}")
-        synced = await bot.tree.sync()
-        print(f"✅ Synced {len(synced)} commands")
-    
-    async def main():
-        await init_db()
-        threading.Thread(target=run_flask, daemon=True).start()
-        await bot.start(TOKEN)
-    
-    asyncio.run(main())
+def تشغيل_الخادم():
+    تطبيق_فلاسك.run(host='0.0.0.0', port=8080)
 
-except Exception as e:
-    log_error(str(e))
+# ========== التوكن والإعدادات ==========
+التوكن = os.getenv("DISCORD_TOKEN")
+if التوكن is None:
+    print("❌ التوكن غير موجود")
     sys.exit(1)
+
+# رتبة الأونر
+رتبة_الأونر = 1507815463172833331
+قناة_التسجيل = None
+
+# إعدادات اللعبة
+عملات_البداية = 1000
+رصيد_البداية = 0
+صحة_الفريق_البدائية = 200
+مكافأة_يومية_عملات = 500
+مكافأة_يومية_رصيد = 10
+مكافأة_ساعية_عملات = 100
+الحد_الأدنى_للعمل = 50
+الحد_الأقصى_للعمل = 200
+مدة_السرقة = 600  # 10 دقائق
+نسبة_السرقة = 0.2  # 20%
+مدة_التخفي = 1800  # 30 دقيقة
+الحد_الأقصى_لاسم_الفريق = 20
+ثواني_اليوم = 86400
+ثواني_الساعة = 3600
+ضرر_اللكمة_الأساسي = 10
+
+# أضرار الأسلحة
+أضرار_الأسلحة = {2: 25, 7: 50, 9: 20, 12: 35, 16: 45, 23: 40}
+
+# الروابط
+رابط_السيرفر = "https://discord.gg/gzFVT4zXKU"
+اسم_المطور = "Gangster Bot"
+
+# قاعدة البيانات
+مسار_قاعدة_البيانات = "game_data.db"
+
+# ========== دوال قاعدة البيانات ==========
+async def تهيئة_قاعدة_البيانات():
+    async with aiosqlite.connect(مسار_قاعدة_البيانات) as قاعدة:
+        await قاعدة.execute('''CREATE TABLE IF NOT EXISTS المستخدمين (
+            user_id TEXT PRIMARY KEY,
+            عملات INTEGER DEFAULT 1000,
+            رصيد INTEGER DEFAULT 0,
+            اخر_يومي INTEGER DEFAULT 0,
+            اخر_ساعي INTEGER DEFAULT 0,
+            الفريق_النشط INTEGER DEFAULT 0,
+            اخر_سرقة INTEGER DEFAULT 0
+        )''')
+        await قاعدة.execute('''CREATE TABLE IF NOT EXISTS الفرق (
+            user_id TEXT,
+            slot INTEGER,
+            الاسم TEXT DEFAULT '',
+            الصحة INTEGER DEFAULT 200,
+            مخفي_حتى INTEGER DEFAULT 0,
+            PRIMARY KEY (user_id, slot)
+        )''')
+        await قاعدة.execute('''CREATE TABLE IF NOT EXISTS المخزون (
+            user_id TEXT,
+            item_id INTEGER,
+            الكمية INTEGER DEFAULT 0,
+            PRIMARY KEY (user_id, item_id)
+        )''')
+        await قاعدة.execute('''CREATE TABLE IF NOT EXISTS المتجر (
+            item_id INTEGER PRIMARY KEY,
+            الاسم TEXT,
+            سعر_عملات INTEGER,
+            سعر_رصيد INTEGER,
+            الوصف TEXT
+        )''')
+        await قاعدة.execute('''CREATE TABLE IF NOT EXISTS السوق_السوداء (
+            item_id INTEGER PRIMARY KEY,
+            الاسم TEXT,
+            سعر_عملات INTEGER,
+            سعر_رصيد INTEGER,
+            الوصف TEXT,
+            الصفحة INTEGER
+        )''')
+        await قاعدة.execute('''CREATE TABLE IF NOT EXISTS المهام (
+            user_id TEXT PRIMARY KEY,
+            مهمة1 TEXT, مهمة2 TEXT, مهمة3 TEXT,
+            تقدم1 INTEGER, تقدم2 INTEGER, تقدم3 INTEGER,
+            مكتمل1 INTEGER, مكتمل2 INTEGER, مكتمل3 INTEGER,
+            اخر_تصفير INTEGER
+        )''')
+        
+        # تعبئة المتجر العادي
+        المؤشر = await قاعدة.execute("SELECT COUNT(*) FROM المتجر")
+        if (await المؤشر.fetchone())[0] == 0:
+            العناصر = [
+                (1, "🍎 تفاحة سحرية", 100, 5, "تستعيد 20 صحة"),
+                (2, "🗡️ سيف حديدي", 250, 10, "+25 ضرر"),
+                (3, "🛡️ درع فولاذي", 200, 8, "+8 دفاع"),
+                (4, "💎 ياقوتة", 500, 20, "حجر كريم"),
+                (5, "🧪 جرعة شفاء", 80, 3, "تشفي 50 صحة"),
+                (6, "📜 درع قديم", 300, 12, "مهارة جديدة"),
+                (7, "🐉 ناب تنين", 1000, 40, "+50 ضرر"),
+                (8, "👑 تاج الملوك", 2000, 80, "سلطة ملكية"),
+                (9, "⚡ حذاء البرق", 400, 15, "+20 ضرر"),
+                (10, "🔮 كرة بلورية", 350, 14, "تكشف الأسرار"),
+                (11, "🧥 عباءة الظلال", 450, 18, "تخفي"),
+                (12, "🏹 قوس إلف", 600, 25, "+35 ضرر"),
+                (13, "🍄 عيش غراب ذهبي", 150, 6, "تأثير عشوائي"),
+                (14, "🧙 قبعة الساحر", 700, 28, "+15 سحر"),
+                (15, "⛏️ فأس قزم", 500, 20, "تعدين"),
+                (16, "🐺 رفيق ذئب", 1200, 50, "+45 ضرر"),
+                (17, "🕯️ شمعة الحقيقة", 180, 7, "تكشف الأكاذيب"),
+                (18, "🧩 مفتاح غامض", 250, 10, "يفتح الأبواب"),
+                (19, "💀 كتاب الموتى", 1500, 60, "يستحضر الموتى"),
+                (20, "🧪 إكسير الحياة", 3000, 120, "يطيل العمر"),
+                (21, "🎣 صنارة صيد", 200, 8, "تصطاد سمكاً"),
+                (22, "🏔️ درع الجليد", 800, 32, "مقاومة البرد"),
+                (23, "🔥 عصا النار", 900, 36, "+40 ضرر"),
+                (24, "🌀 تميمة الريح", 550, 22, "يتحكم بالرياح"),
+                (25, "🌟 شظية نجم", 400, 16, "يحقق الأمنيات"),
+                (26, "📖 كتاب التخفي", 500, 20, "يخفي فريقك 30 دقيقة")
+            ]
+            await قاعدة.executemany("INSERT INTO المتجر VALUES (?,?,?,?,?)", العناصر)
+        
+        # تعبئة السوق السوداء (50 سلعة)
+        المؤشر = await قاعدة.execute("SELECT COUNT(*) FROM السوق_السوداء")
+        if (await المؤشر.fetchone())[0] == 0:
+            عناصر_سوداء = []
+            اسماء = [
+                "🔫 AK-47", "💣 RPG", "🔪 سكين قتال", "🔫 مسدس كاتم", "💣 قنبلة يدوية",
+                "🔫 رشاش", "💣 قنبلة دخان", "🔫 مسدس رشاش", "💣 قنبلة مسيلة", "🔪 خنجر مسموم",
+                "🔫 بندقية قنص", "💣 عبوة ناسفة", "🔫 مسدس ذهبي", "💣 قنبلة عنقودية", "🔪 سيف ياباني",
+                "🔫 كلاشنكوف", "💣 مولوتوف", "🔫 مسدس كهربائي", "💣 لغم أرضي", "🔪 رمح",
+                "🔫 بازوكا", "💣 قنبلة نووية", "🔪 فأس", "🔫 رشاش ثقيل", "💣 قنبلة غاز",
+                "🔫 مسدس سيلينيوم", "💣 ديناميت", "🔪 منجل", "🔫 رشاش خفيف", "💣 قنبلة فلاش",
+                "🔫 مسدس فضة", "💣 قنبلة حرارية", "🔪 ساطور", "🔫 بندقية صيد", "💣 قنبلة كيميائية",
+                "🔫 مسدس بلاتينيوم", "💣 قنبلة بلاستيكية", "🔪 خنجر فضة", "🔫 رشاش ذهبي", "💣 قنبلة مغناطيسية",
+                "🔫 مسدس نحاس", "💣 قنبلة زمنية", "🔪 سيف فضة", "🔫 بندقية فضة", "💣 قنبلة صوت",
+                "🔫 مسدس هيدروجين", "💣 قنبلة ضوئية", "🔪 رمح فضة", "🔫 رشاش نحاس", "💣 قنبلة متطورة"
+            ]
+            for i in range(1, 51):
+                الصفحة = (i-1)//10 + 1
+                السعر = i * 150
+                الرصيد = i // 5
+                عناصر_سوداء.append((i, اسماء[i-1], السعر, الرصيد, f"سلاح من الصفحة {الصفحة}", الصفحة))
+            await قاعدة.executemany("INSERT INTO السوق_السوداء VALUES (?,?,?,?,?,?)", عناصر_سوداء)
+        
+        await قاعدة.commit()
+
+async def احصل_على_مستخدم(المعرف):
+    async with aiosqlite.connect(مسار_قاعدة_البيانات) as قاعدة:
+        async with قاعدة.execute("SELECT عملات, رصيد, اخر_يومي, اخر_ساعي, الفريق_النشط, اخر_سرقة FROM المستخدمين WHERE user_id = ?", (المعرف,)) as مؤشر:
+            الصف = await مؤشر.fetchone()
+            if الصف is None:
+                await قاعدة.execute("INSERT INTO المستخدمين (user_id, عملات, رصيد) VALUES (?, ?, ?)", (المعرف, عملات_البداية, رصيد_البداية))
+                await قاعدة.execute("INSERT OR IGNORE INTO الفرق (user_id, slot, الصحة) VALUES (?, 0, ?), (?, 1, ?)", (المعرف, صحة_الفريق_البدائية, المعرف, صحة_الفريق_البدائية))
+                await قاعدة.commit()
+                return {"عملات": عملات_البداية, "رصيد": رصيد_البداية, "اخر_يومي": 0, "اخر_ساعي": 0, "الفريق_النشط": 0, "اخر_سرقة": 0}
+            return {"عملات": الصف[0], "رصيد": الصف[1], "اخر_يومي": الصف[2], "اخر_ساعي": الصف[3], "الفريق_النشط": الصف[4], "اخر_سرقة": الصف[5] if len(الصف) > 5 else 0}
+
+async def تحديث_مستخدم(المعرف, **kwargs):
+    async with aiosqlite.connect(مسار_قاعدة_البيانات) as قاعدة:
+        for مفتاح, قيمة in kwargs.items():
+            await قاعدة.execute(f"UPDATE المستخدمين SET {مفتاح} = ? WHERE user_id = ?", (قيمة, المعرف))
+        await قاعدة.commit()
+
+async def احصل_على_فريق(المعرف, الرقم, مع_الصحة=False):
+    async with aiosqlite.connect(مسار_قاعدة_البيانات) as قاعدة:
+        if مع_الصحة:
+            async with قاعدة.execute("SELECT الاسم, الصحة, مخفي_حتى FROM الفرق WHERE user_id = ? AND slot = ?", (المعرف, الرقم)) as مؤشر:
+                الصف = await مؤشر.fetchone()
+                return (الصف[0], الصف[1], الصف[2]) if الصف else ("", صحة_الفريق_البدائية, 0)
+        else:
+            async with قاعدة.execute("SELECT الاسم FROM الفرق WHERE user_id = ? AND slot = ?", (المعرف, الرقم)) as مؤشر:
+                الصف = await مؤشر.fetchone()
+                return الصف[0] if الصف else ""
+
+async def تعيين_فريق(المعرف, الرقم, الاسم):
+    async with aiosqlite.connect(مسار_قاعدة_البيانات) as قاعدة:
+        await قاعدة.execute("INSERT OR REPLACE INTO الفرق (user_id, slot, الاسم, الصحة) VALUES (?, ?, ?, COALESCE((SELECT الصحة FROM الفرق WHERE user_id=? AND slot=?), ?))",
+                            (المعرف, الرقم, الاسم, المعرف, الرقم, صحة_الفريق_البدائية))
+        await قاعدة.commit()
+
+async def تحديث_صحة_الفريق(المعرف, الرقم, صحة_جديدة):
+    async with aiosqlite.connect(مسار_قاعدة_البيانات) as قاعدة:
+        await قاعدة.execute("UPDATE الفرق SET الصحة = ? WHERE user_id = ? AND slot = ?", (صحة_جديدة, المعرف, الرقم))
+        await قاعدة.commit()
+
+async def تحديث_اختفاء_الفريق(المعرف, الرقم, حتى):
+    async with aiosqlite.connect(مسار_قاعدة_البيانات) as قاعدة:
+        await قاعدة.execute("UPDATE الفرق SET مخفي_حتى = ? WHERE user_id = ? AND slot = ?", (حتى, المعرف, الرقم))
+        await قاعدة.commit()
+
+async def احصل_على_كل_المستخدمين():
+    async with aiosqlite.connect(مسار_قاعدة_البيانات) as قاعدة:
+        async with قاعدة.execute("SELECT user_id, عملات FROM المستخدمين") as مؤشر:
+            return await مؤشر.fetchall()
+
+async def أضف_إلى_المخزون(المعرف, رقم_السلعة, كمية):
+    async with aiosqlite.connect(مسار_قاعدة_البيانات) as قاعدة:
+        await قاعدة.execute("INSERT INTO المخزون (user_id, item_id, الكمية) VALUES (?, ?, ?) ON CONFLICT(user_id, item_id) DO UPDATE SET الكمية = الكمية + ?",
+                            (المعرف, رقم_السلعة, كمية, كمية))
+        await قاعدة.commit()
+
+async def احذف_من_المخزون(المعرف, رقم_السلعة, كمية):
+    async with aiosqlite.connect(مسار_قاعدة_البيانات) as قاعدة:
+        await قاعدة.execute("UPDATE المخزون SET الكمية = الكمية - ? WHERE user_id = ? AND item_id = ?", (كمية, المعرف, رقم_السلعة))
+        await قاعدة.commit()
+
+async def احصل_على_المخزون(المعرف):
+    async with aiosqlite.connect(مسار_قاعدة_البيانات) as قاعدة:
+        async with قاعدة.execute("SELECT item_id, الكمية FROM المخزون WHERE user_id = ?", (المعرف,)) as مؤشر:
+            return await مؤشر.fetchall()
+
+async def احصل_على_سلعة_من_المتجر(رقم_السلعة):
+    async with aiosqlite.connect(مسار_قاعدة_البيانات) as قاعدة:
+        async with قاعدة.execute("SELECT item_id, الاسم, سعر_عملات, سعر_رصيد, الوصف FROM المتجر WHERE item_id = ?", (رقم_السلعة,)) as مؤشر:
+            الصف = await مؤشر.fetchone()
+            return {"id": الصف[0], "name": الصف[1], "coinPrice": الصف[2], "creditPrice": الصف[3], "desc": الصف[4]} if الصف else None
+
+async def احصل_على_كل_المتجر():
+    async with aiosqlite.connect(مسار_قاعدة_البيانات) as قاعدة:
+        async with قاعدة.execute("SELECT item_id, الاسم, سعر_عملات, سعر_رصيد, الوصف FROM المتجر ORDER BY item_id") as مؤشر:
+            الصفوف = await مؤشر.fetchall()
+            return [{"id": ص[0], "name": ص[1], "coinPrice": ص[2], "creditPrice": ص[3], "desc": ص[4]} for ص in الصفوف]
+
+async def احصل_على_سلع_السوق_السوداء(الصفحة):
+    async with aiosqlite.connect(مسار_قاعدة_البيانات) as قاعدة:
+        async with قاعدة.execute("SELECT item_id, الاسم, سعر_عملات, سعر_رصيد, الوصف FROM السوق_السوداء WHERE الصفحة = ? ORDER BY item_id", (الصفحة,)) as مؤشر:
+            الصفوف = await مؤشر.fetchall()
+            return [{"id": ص[0], "name": ص[1], "coinPrice": ص[2], "creditPrice": ص[3], "desc": ص[4]} for ص in الصفوف]
+
+async def احصل_على_سلعة_من_السوق_السوداء(رقم_السلعة):
+    async with aiosqlite.connect(مسار_قاعدة_البيانات) as قاعدة:
+        async with قاعدة.execute("SELECT item_id, الاسم, سعر_عملات, سعر_رصيد, الوصف FROM السوق_السوداء WHERE item_id = ?", (رقم_السلعة,)) as مؤشر:
+            الصف = await مؤشر.fetchone()
+            return {"id": الصف[0], "name": الصف[1], "coinPrice": الصف[2], "creditPrice": الصف[3], "desc": الصف[4]} if الصف else None
+
+async def احصل_على_أفضل_سلاح(المعرف):
+    المخزون = await احصل_على_المخزون(المعرف)
+    افضل = ضرر_اللكمة_الأساسي
+    for رقم_السلعة, كمية in المخزون:
+        if كمية > 0 and رقم_السلعة in أضرار_الأسلحة:
+            افضل = max(افضل, أضرار_الأسلحة[رقم_السلعة])
+    return افضل
+
+async def يمتلك_سلعة(المعرف, رقم_السلعة):
+    المخزون = await احصل_على_المخزون(المعرف)
+    for رقم, كمية in المخزون:
+        if رقم == رقم_السلعة and كمية > 0:
+            return True
+    return False
+
+async def ارسال_تسجيل(البوت, العنوان, الوصف, اللون=0xFF4500):
+    if قناة_التسجيل:
+        القناة = البوت.get_channel(قناة_التسجيل)
+        if القناة:
+            تضمين = discord.Embed(title=العنوان, description=الوصف, color=اللون, timestamp=datetime.now())
+            await القناة.send(embed=تضمين)
