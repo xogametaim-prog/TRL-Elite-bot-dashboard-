@@ -20,7 +20,7 @@ async def on_ready():
     print("✅ تم مزامنة الأوامر")
 
 async def main():
-    await تهيئة_قاعدة_البيانات()
+    await تهيئة_قاعدة_البيانات()  # استدعاء دالة التهيئة
     await البوت.start(TOKEN)
 
 if __name__ == "__main__":
