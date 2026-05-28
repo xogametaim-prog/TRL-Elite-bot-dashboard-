@@ -695,4 +695,9 @@ async def on_ready():
     threading.Thread(target=تشغيل_الخادم, daemon=True).start()
     print(f"🚀 البوت {البوت.user} جاهز للعمل!")
 
-if 
+if __name__ == "__main__":
+    try:
+        البوت.run(التوكن)
+    except Exception as e:
+        print(f"❌ خطأ: {e}")
+        traceback.print_exc()
