@@ -19,8 +19,7 @@ class Management:
                 welcome_channel TEXT,
                 logs_channel TEXT,
                 report_channel TEXT,
-                member_count_channel TEXT,
-                faq_channel TEXT
+                member_count_channel TEXT
             )''')
             await db.execute('''CREATE TABLE IF NOT EXISTS faq_messages (
                 guild_id TEXT,
@@ -56,14 +55,9 @@ class Management:
             if not channel:
                 continue
             
-            members_joined = 0
-            members_left = 0
-            messages_count = 0
-            
-            embed = discord.Embed(title="📊 التقرير اليومي", description=f"نشاط السيرفر لليوم", color=0x00AAFF, timestamp=datetime.now())
-            embed.add_field(name="👥 الأعضاء الجدد", value=str(members_joined), inline=True)
-            embed.add_field(name="🚪 الأعضاء المغادرين", value=str(members_left), inline=True)
-            embed.add_field(name="💬 عدد الرسائل", value=str(messages_count), inline=True)
+            embed = discord.Embed(title="📊 التقرير اليومي", description=f"تقرير نشاط {guild.name}", color=0x00AAFF, timestamp=datetime.now())
+            embed.add_field(name="👥 إجمالي الأعضاء", value=str(guild.member_count), inline=True)
+            embed.add_field(name="📅 التاريخ", value=datetime.now().strftime("%Y-%m-%d"), inline=True)
             await channel.send(embed=embed)
     
     @daily_report.before_loop
@@ -71,9 +65,10 @@ class Management:
         await self.bot.wait_until_ready()
 
 class EmbedBuilder(discord.ui.Modal, title="إنشاء رسالة Embed"):
-    title = discord.ui.TextInput(label="العنوان", placeholder="أدخل عنوان الرسالة...", required=True)
-    description = discord.ui.TextInput(label="الوصف", placeholder="أدخل نص الرسالة...", style=discord.TextStyle.paragraph, required=True)
-    color = discord.ui.TextInput(label="اللون (Hex)", placeholder="مثال: 5865F2", required=False, default="5865F2")
+    title = discord.ui.TextInput(label="العنوان", placeholder="أدخل عنوان الرسالة...", required=True, max_length=256)
+    description = discord.ui.TextInput(label="الوصف", placeholder="أدخل نص الرسالة...", style=discord.TextStyle.paragraph, required=True, max_length=4000)
+    color = discord.ui.TextInput(label="اللون (Hex)", placeholder="مثال: 5865F2", required=False, default="5865F2", max_length=6)
+    footer = discord.ui.TextInput(label="تذييل (اختياري)", placeholder="نص التذييل", required=False, max_length=2048)
     
     async def on_submit(self, interaction: discord.Interaction):
         try:
@@ -81,6 +76,8 @@ class EmbedBuilder(discord.ui.Modal, title="إنشاء رسالة Embed"):
         except:
             color_int = 0x5865F2
         embed = discord.Embed(title=self.title.value, description=self.description.value, color=color_int)
+        if self.footer.value:
+            embed.set_footer(text=self.footer.value)
         await interaction.response.send_message(embed=embed)
 
 class EmbedEditView(discord.ui.View):
@@ -89,20 +86,25 @@ class EmbedEditView(discord.ui.View):
         self.message = message
         self.original_embed = original_embed
     
-    @discord.ui.button(label="✏️ تعديل", style=discord.ButtonStyle.primary)
+    @discord.ui.button(label="✏️ تعديل", style=discord.ButtonStyle.primary, emoji="✏️")
     async def edit_button(self, interaction: discord.Interaction, button: discord.ui.Button):
         modal = EditEmbedModal(self.message, self.original_embed)
         await interaction.response.send_modal(modal)
     
-    @discord.ui.button(label="🗑️ حذف", style=discord.ButtonStyle.danger)
+    @discord.ui.button(label="🗑️ حذف", style=discord.ButtonStyle.danger, emoji="🗑️")
     async def delete_button(self, interaction: discord.Interaction, button: discord.ui.Button):
         await self.message.delete()
         await interaction.response.send_message("✅ تم حذف الرسالة", ephemeral=True)
+    
+    @discord.ui.button(label="📋 نسخ", style=discord.ButtonStyle.secondary, emoji="📋")
+    async def copy_button(self, interaction: discord.Interaction, button: discord.ui.Button):
+        await interaction.response.send_message(f"```json\n{self.original_embed.to_dict()}\n```", ephemeral=True)
 
 class EditEmbedModal(discord.ui.Modal, title="تعديل الرسالة"):
     title = discord.ui.TextInput(label="العنوان", required=False)
     description = discord.ui.TextInput(label="الوصف", style=discord.TextStyle.paragraph, required=False)
     color = discord.ui.TextInput(label="اللون (Hex)", required=False)
+    footer = discord.ui.TextInput(label="تذييل", required=False)
     
     def __init__(self, message, original_embed):
         super().__init__()
@@ -111,6 +113,7 @@ class EditEmbedModal(discord.ui.Modal, title="تعديل الرسالة"):
         self.title.default = original_embed.title or ""
         self.description.default = original_embed.description or ""
         self.color.default = hex(original_embed.color.value)[2:] if original_embed.color else "5865F2"
+        self.footer.default = original_embed.footer.text if original_embed.footer else ""
     
     async def on_submit(self, interaction: discord.Interaction):
         new_title = self.title.value or self.original_embed.title
@@ -120,6 +123,8 @@ class EditEmbedModal(discord.ui.Modal, title="تعديل الرسالة"):
         except:
             color_int = self.original_embed.color.value or 0x5865F2
         new_embed = discord.Embed(title=new_title, description=new_desc, color=color_int)
+        if self.footer.value:
+            new_embed.set_footer(text=self.footer.value)
         await self.message.edit(embed=new_embed)
         await interaction.response.send_message("✅ تم تعديل الرسالة", ephemeral=True)
 
@@ -133,6 +138,7 @@ class HelpButtons(discord.ui.View):
         embed = discord.Embed(title="📊 إحصائيات البوت", color=0x5865F2)
         embed.add_field(name="📦 الإصدار", value="2.0", inline=True)
         embed.add_field(name="👑 المطور", value="taim", inline=True)
+        embed.add_field(name="📞 التواصل", value="ta_im1@", inline=True)
         await interaction.response.send_message(embed=embed, ephemeral=True)
     
     @discord.ui.button(label="🔗 دعوة البوت", style=discord.ButtonStyle.success, emoji="🔗")
@@ -143,7 +149,7 @@ class HelpButtons(discord.ui.View):
     @discord.ui.button(label="ℹ️ معلومات", style=discord.ButtonStyle.secondary, emoji="ℹ️")
     async def about_button(self, interaction: discord.Interaction, button: discord.ui.Button):
         embed = discord.Embed(title="ℹ️ معلومات البوت", description="بوت إدارة سيرفر متكامل", color=0x5865F2)
-        embed.add_field(name="🛠️ الميزات", value="• سجل إداري\n• تقارير يومية\n• تحليل نشاط\n• ردود تلقائية\n• تحديث عدد الأعضاء\n• رسائل Embed مخصصة", inline=False)
+        embed.add_field(name="🛠️ الميزات", value="• سجل إداري\n• تقارير يومية\n• تحليل نشاط\n• ردود تلقائية\n• تحديث عدد الأعضاء\n• رسائل Embed مخصصة\n• تتبع الدعوات", inline=False)
         await interaction.response.send_message(embed=embed, ephemeral=True)
 
 class ConfirmView(discord.ui.View):
@@ -151,13 +157,13 @@ class ConfirmView(discord.ui.View):
         super().__init__(timeout=30)
         self.value = None
     
-    @discord.ui.button(label="✅ تأكيد", style=discord.ButtonStyle.success)
+    @discord.ui.button(label="✅ تأكيد", style=discord.ButtonStyle.success, emoji="✅")
     async def confirm(self, interaction: discord.Interaction, button: discord.ui.Button):
         self.value = True
         self.stop()
         await interaction.response.send_message("✅ تم التأكيد", ephemeral=True)
     
-    @discord.ui.button(label="❌ إلغاء", style=discord.ButtonStyle.danger)
+    @discord.ui.button(label="❌ إلغاء", style=discord.ButtonStyle.danger, emoji="❌")
     async def cancel(self, interaction: discord.Interaction, button: discord.ui.Button):
         self.value = False
         self.stop()
@@ -165,16 +171,13 @@ class ConfirmView(discord.ui.View):
 
 class RolesSelect(discord.ui.Select):
     def __init__(self, roles):
-        options = [discord.SelectOption(label=role.name, value=str(role.id)) for role in roles[:25]]
-        super().__init__(placeholder="اختر الرتب...", options=options, min_values=1, max_values=len(options))
+        options = []
+        for role in roles[:25]:
+            options.append(discord.SelectOption(label=role.name[:100], value=str(role.id)))
+        super().__init__(placeholder="📋 اختر الرتب...", options=options, min_values=1, max_values=len(options))
     
     async def callback(self, interaction: discord.Interaction):
         selected_roles = [interaction.guild.get_role(int(val)) for val in self.values]
         roles_text = "\n".join([f"• {role.mention}" for role in selected_roles if role])
-        embed = discord.Embed(title="👑 الرتب المختارة", description=roles_text or "لا توجد", color=0x00FF00)
+        embed = discord.Embed(title="👑 الرتب المختارة", description=roles_text or "لا توجد رتب", color=0x00FF00)
         await interaction.response.send_message(embed=embed, ephemeral=True)
-
-class FAQView(discord.ui.View):
-    def __init__(self, faqs):
-        super().__init__(timeout=None)
-        select = discord.ui.Select(placeholder="اختر سؤالاً..."
