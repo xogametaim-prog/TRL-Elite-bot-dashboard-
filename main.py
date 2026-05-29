@@ -1,4 +1,4 @@
-# ==================== main.py ====================
+# ==================== main.py (محدث) ====================
 import discord
 from discord.ext import commands, tasks
 from discord import app_commands
@@ -10,7 +10,7 @@ import sys
 import traceback
 import threading
 from flask import Flask
-from tickets import TicketButton, رتبة_التذاكر_المسموح_لها
+from tickets import TicketButton, رتبة_التذاكر_المسموح_لها, is_authorized
 from shop_data import *
 
 تطبيق_فلاسك = Flask(__name__)
@@ -127,6 +127,15 @@ async def بنل(interaction: discord.Interaction):
     await interaction.channel.send(embed=embed, view=view)
     await interaction.response.send_message("✅ تم إرسال لوحة التذاكر!", ephemeral=True)
 
+@البوت.tree.command(name="تعيين_رتبة_التذاكر", description="تعيين الرتبة المسؤولة عن التذاكر")
+async def تعيين_رتبة_التذاكر(interaction: discord.Interaction, role: discord.Role):
+    if not interaction.user.guild_permissions.administrator:
+        await interaction.response.send_message("❌ هذا الأمر مخصص للأونر فقط!", ephemeral=True)
+        return
+    global رتبة_التذاكر_المسموح_لها
+    رتبة_التذاكر_المسموح_لها = role.id
+    await interaction.response.send_message(f"✅ تم تعيين رتبة {role.mention} كرتبة مسؤولة عن التذاكر")
+
 @البوت.tree.command(name="help", description="عرض جميع الأوامر")
 async def help_cmd(interaction: discord.Interaction):
     embed = discord.Embed(title="🤖 قائمة الأوامر", color=0x5865F2)
@@ -137,7 +146,7 @@ async def help_cmd(interaction: discord.Interaction):
     embed.add_field(name="⚔️ القتال", value="`/هجوم @لاعب`", inline=False)
     embed.add_field(name="💰 السرقة", value="`/سرقة @لاعب`", inline=False)
     embed.add_field(name="📋 المهام", value="`/مهامي` `/تسليم_مهمة`", inline=False)
-    embed.add_field(name="🎫 التذاكر", value="`/اعدادات` `/بنل`", inline=False)
+    embed.add_field(name="🎫 التذاكر", value="`/اعدادات` `/بنل` `/تعيين_رتبة_التذاكر`", inline=False)
     embed.add_field(name="📊 الإحصائيات", value="`/brq`", inline=False)
     embed.add_field(name="🔗 روابط", value=f"[دعم السيرفر]({رابط_السيرفر})", inline=False)
     embed.set_footer(text=f"تم تطوير هذا البوت بواسطة {اسم_المطور} | {معرف_المطور}")
