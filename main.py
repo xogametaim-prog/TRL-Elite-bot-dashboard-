@@ -1,5 +1,5 @@
 import discord
-from discord.ext import commands
+from discord.ext import commands, tasks
 from discord import app_commands
 import aiosqlite
 import asyncio
@@ -10,7 +10,7 @@ import sys
 import traceback
 import threading
 from flask import Flask
-from datetime import datetime
+from datetime import datetime, date, timedelta
 
 تطبيق_فلاسك = Flask(__name__)
 
@@ -26,9 +26,8 @@ if التوكن is None:
     print("❌ التوكن غير موجود")
     sys.exit(1)
 
-رتبة_الأونر = 1507815463172833331
-رتبة_الدعم_المسموح_لها = 123456789012345678
 قناة_التسجيل = None
+قناة_الرسائل_التلقائية = None
 
 عملات_البداية = 1000
 رصيد_البداية = 0
@@ -52,6 +51,18 @@ if التوكن is None:
 معرف_المطور = "ta_im1@"
 مسار_قاعدة_البيانات = "game_data.db"
 مسار_تذاكر_البيانات = "ticket_data.db"
+
+الرسائل_التلقائية = [
+    "🎮 هل جربت استخدام `/اعمل` لكسب عملات إضافية اليوم؟",
+    "🛒 لا تنسى زيارة المتجر `/المتجر` وشراء الأسلحة القوية!",
+    "⚔️ يمكنك مهاجمة اللاعبين الآخرين باستخدام `/هجوم @لاعب`",
+    "💰 السرقة متاحة كل 10 دقائق! استخدم `/سرقة @لاعب`",
+    "👥 قم بتعيين فريقك باستخدام `/تعيين_فريق`",
+    "🔫 السوق السوداء تحتوي على أسلحة نادرة! استخدم `/بلاك_ماركت`",
+    "📋 تحقق من مهامك اليومية باستخدام `/مهامي`",
+    "🎫 تواجه مشكلة؟ افتح تذكرة باستخدام الزر الموجود في القناة المخصصة",
+    "💎 الرصيد المميز يعطيك ضعف الكمية عند الشراء من المتجر!",
+]
 
 async def تهيئة_قاعدة_البيانات():
     async with aiosqlite.connect(مسار_قاعدة_البيانات) as قاعدة:
@@ -99,6 +110,23 @@ async def تهيئة_قاعدة_البيانات():
             تقدم1 INTEGER, تقدم2 INTEGER, تقدم3 INTEGER,
             مكتمل1 INTEGER, مكتمل2 INTEGER, مكتمل3 INTEGER,
             اخر_تصفير INTEGER
+        )''')
+        await قاعدة.execute('''CREATE TABLE IF NOT EXISTS رسائل_اللاعبين (
+            user_id TEXT PRIMARY KEY,
+            اليوم INTEGER DEFAULT 0,
+            الاسبوع INTEGER DEFAULT 0,
+            الشهر INTEGER DEFAULT 0,
+            المجموع INTEGER DEFAULT 0,
+            اخر_تحديث_اليوم TEXT,
+            اخر_تحديث_الاسبوع TEXT,
+            اخر_تحديث_الشهر TEXT
+        )''')
+        await قاعدة.execute('''CREATE TABLE IF NOT EXISTS اعدادات_السيرفر (
+            guild_id TEXT PRIMARY KEY,
+            رتبة_التذاكر TEXT,
+            قناة_البانل TEXT,
+            قناة_الرسائل_التلقائية TEXT,
+            تم_الاعداد BOOLEAN DEFAULT 0
         )''')
         
         المؤشر = await قاعدة.execute("SELECT COUNT(*) FROM المتجر")
@@ -249,7 +277,7 @@ async def create_ticket_channel(guild, creator, category_id):
             count = (await cursor.fetchone())[0]
             ticket_number = count + 1
     
-    channel_name = f"ticket-{creator.name}-{ticket_number}"
+    channel_name = f"تذكرة-{creator.name}-{ticket_number}"
     category = guild.get_channel(int(category_id)) if category_id else None
     
     overwrites = {
@@ -258,9 +286,9 @@ async def create_ticket_channel(guild, creator, category_id):
     }
     
     async with aiosqlite.connect(مسار_تذاكر_البيانات) as db:
-        async with db.execute("SELECT role_id FROM staff_roles WHERE guild_id = ? AND role_type = 'support'", (str(guild.id),)) as cursor:
-            support_roles = await cursor.fetchall()
-            for role_id in support_roles:
+        async with db.execute("SELECT role_id FROM staff_roles WHERE guild_id = ? AND role_type = 'admin'", (str(guild.id),)) as cursor:
+            admin_roles = await cursor.fetchall()
+            for role_id in admin_roles:
                 role = guild.get_role(int(role_id[0]))
                 if role:
                     overwrites[role] = discord.PermissionOverwrite(read_messages=True, send_messages=True, attach_files=True, embed_links=True, add_reactions=True)
@@ -281,11 +309,35 @@ async def log_ticket_event(bot, guild_id, event_type, details):
     await log_channel.send(embed=embed)
 
 async def is_authorized_staff(member, guild_id):
-    if member.guild_permissions.administrator:
-        return True
-    if رتبة_الدعم_المسموح_لها and member.guild.get_role(رتبة_الدعم_المسموح_لها) in member.roles:
-        return True
-    return False
+    async with aiosqlite.connect(مسار_تذاكر_البيانات) as db:
+        async with db.execute("SELECT رتبة_التذاكر FROM اعدادات_السيرفر WHERE guild_id = ?", (str(guild_id),)) as cursor:
+            row = await cursor.fetchone()
+            if row and row[0]:
+                role = member.guild.get_role(int(row[0]))
+                if role and role in member.roles:
+                    return True
+    return member.guild_permissions.administrator
+
+async def update_message_count(user_id):
+    اليوم = date.today().isoformat()
+    الاسبوع = (date.today() - timedelta(days=date.today().weekday())).isoformat()
+    الشهر = date.today().replace(day=1).isoformat()
+    
+    async with aiosqlite.connect(مسار_قاعدة_البيانات) as db:
+        async with db.execute("SELECT اليوم, الاسبوع, الشهر, المجموع, اخر_تحديث_اليوم, اخر_تحديث_الاسبوع, اخر_تحديث_الشهر FROM رسائل_اللاعبين WHERE user_id = ?", (str(user_id),)) as cursor:
+            row = await cursor.fetchone()
+        
+        if row is None:
+            await db.execute("INSERT INTO رسائل_اللاعبين (user_id, اليوم, الاسبوع, الشهر, المجموع, اخر_تحديث_اليوم, اخر_تحديث_الاسبوع, اخر_تحديث_الشهر) VALUES (?, 1, 1, 1, 1, ?, ?, ?)",
+                            (str(user_id), اليوم, الاسبوع, الشهر))
+        else:
+            اليوم_القديم, الاسبوع_القديم, الشهر_القديم, المجموع, تاريخ_اليوم, تاريخ_الاسبوع, تاريخ_الشهر = row
+            اليوم_جديد = اليوم_القديم + 1 if تاريخ_اليوم == اليوم else 1
+            الاسبوع_جديد = الاسبوع_القديم + 1 if تاريخ_الاسبوع == الاسبوع else 1
+            الشهر_جديد = الشهر_القديم + 1 if تاريخ_الشهر == الشهر else 1
+            await db.execute("UPDATE رسائل_اللاعبين SET اليوم = ?, الاسبوع = ?, الشهر = ?, المجموع = ?, اخر_تحديث_اليوم = ?, اخر_تحديث_الاسبوع = ?, اخر_تحديث_الشهر = ? WHERE user_id = ?",
+                            (اليوم_جديد, الاسبوع_جديد, الشهر_جديد, المجموع + 1, اليوم, الاسبوع, الشهر, str(user_id)))
+        await db.commit()
 
 async def is_blacklisted(guild_id, user_id):
     async with aiosqlite.connect(مسار_تذاكر_البيانات) as db:
@@ -474,6 +526,72 @@ class TicketControlView(discord.ui.View):
         )
         await interaction.response.send_message(embed=embed, view=view, ephemeral=True)
 
+@البوت.event
+async def on_message(message):
+    if message.author.bot:
+        return
+    await update_message_count(message.author.id)
+    await البوت.process_commands(message)
+
+async def ارسال_البانل_تلقائيا():
+    await البوت.wait_until_ready()
+    while not البوت.is_closed():
+        try:
+            async with aiosqlite.connect(مسار_تذاكر_البيانات) as db:
+                async with db.execute("SELECT guild_id, قناة_البانل FROM اعدادات_السيرفر WHERE تم_الاعداد = 1 AND قناة_البانل IS NOT NULL") as cursor:
+                    rows = await cursor.fetchall()
+            
+            for guild_id, channel_id in rows:
+                guild = البوت.get_guild(int(guild_id))
+                if not guild:
+                    continue
+                channel = guild.get_channel(int(channel_id))
+                if not channel:
+                    continue
+                
+                config = await get_ticket_config(guild_id)
+                if not config:
+                    continue
+                
+                embed = discord.Embed(
+                    title=config["embed_title"],
+                    description=config["embed_description"],
+                    color=int(config["embed_color"], 16)
+                )
+                view = TicketButton(config)
+                
+                async for msg in channel.history(limit=10):
+                    if msg.author == البوت.user and msg.embeds and msg.embeds[0].title == config["embed_title"]:
+                        await msg.edit(embed=embed, view=view)
+                        break
+                else:
+                    await channel.send(embed=embed, view=view)
+        except:
+            pass
+        await asyncio.sleep(300)
+
+async def ارسال_رسائل_تلقائية():
+    await البوت.wait_until_ready()
+    while not البوت.is_closed():
+        try:
+            async with aiosqlite.connect(مسار_تذاكر_البيانات) as db:
+                async with db.execute("SELECT guild_id, قناة_الرسائل_التلقائية FROM اعدادات_السيرفر WHERE تم_الاعداد = 1 AND قناة_الرسائل_التلقائية IS NOT NULL") as cursor:
+                    rows = await cursor.fetchall()
+            
+            for guild_id, channel_id in rows:
+                guild = البوت.get_guild(int(guild_id))
+                if not guild:
+                    continue
+                channel = guild.get_channel(int(channel_id))
+                if not channel:
+                    continue
+                
+                رسالة = random.choice(الرسائل_التلقائية)
+                await channel.send(رسالة)
+        except:
+            pass
+        await asyncio.sleep(300)
+
 async def احصل_على_مستخدم(المعرف):
     async with aiosqlite.connect(مسار_قاعدة_البيانات) as قاعدة:
         async with قاعدة.execute("SELECT عملات, رصيد, اخر_يومي, اخر_ساعي, الفريق_النشط, اخر_سرقة FROM المستخدمين WHERE user_id = ?", (المعرف,)) as مؤشر:
@@ -660,10 +778,89 @@ async def مساعدة(التفاعل: discord.Interaction):
     تضمين.add_field(name="📋 المهام", value="`/مهامي` `/تسليم_مهمة`", inline=False)
     تضمين.add_field(name="ℹ️ معلومات البوت", value="`/وصف` (روابط المطور وسيرفر الدعم)", inline=False)
     تضمين.add_field(name="👑 الإدارة", value="`/اعطاء_فلوس` `/حذف_فريق` `/اذاعة` (للأونر فقط)", inline=False)
-    تضمين.add_field(name="🎫 نظام التذاكر", value="`/setup` `/panel` `/addadmin` `/addsupport` `/removesupport` `/blacklist` `/stats`", inline=False)
+    تضمين.add_field(name="🎫 نظام التذاكر", value="`/اعداد_التذاكر` `/تعيين_رتبة_التذاكر` `/تعيين_قناة_البانل` `/تعيين_قناة_الرسائل`", inline=False)
+    تضمين.add_field(name="📊 إحصائيات الرسائل", value="`/brq` (عرض عدد رسائلك)", inline=False)
     تضمين.add_field(name="🔗 روابط", value=f"[دعم السيرفر]({رابط_السيرفر})", inline=False)
     تضمين.set_footer(text=f"تم تطوير هذا البوت بواسطة {اسم_المطور} | {معرف_المطور}")
     await التفاعل.response.send_message(embed=تضمين)
+
+@البوت.tree.command(name="اعداد_التذاكر", description="إعداد نظام التذاكر (الأونر فقط)")
+@app_commands.describe(category="الفئة التي ستُنشأ بها التذاكر", log_channel="قناة السجلات", auto_close_hours="عدد ساعات الإغلاق التلقائي")
+async def setup_ticket(interaction: discord.Interaction, category: discord.CategoryChannel, log_channel: discord.TextChannel = None, auto_close_hours: int = 24):
+    if not interaction.user.guild_permissions.administrator:
+        await interaction.response.send_message("❌ هذا الأمر مخصص للأونر فقط!", ephemeral=True)
+        return
+    
+    await save_ticket_config(interaction.guild_id, category_id=str(category.id), log_channel_id=str(log_channel.id) if log_channel else None, auto_close_hours=auto_close_hours)
+    
+    await interaction.response.send_message(f"✅ تم إعداد نظام التذاكر بنجاح!\n- الفئة: {category.mention}\n- قناة السجلات: {log_channel.mention if log_channel else 'لم يتم تعيينها'}\n- الإغلاق التلقائي: {auto_close_hours} ساعة", ephemeral=True)
+
+@البوت.tree.command(name="تعيين_رتبة_التذاكر", description="تعيين الرتبة المسموح لها باستلام وإغلاق التذاكر")
+@app_commands.describe(role="الرتبة المراد إضافتها")
+async def set_ticket_role(interaction: discord.Interaction, role: discord.Role):
+    if not interaction.user.guild_permissions.administrator:
+        await interaction.response.send_message("❌ هذا الأمر مخصص للأونر فقط!", ephemeral=True)
+        return
+    
+    async with aiosqlite.connect(مسار_تذاكر_البيانات) as db:
+        await db.execute("INSERT OR REPLACE INTO اعدادات_السيرفر (guild_id, رتبة_التذاكر, تم_الاعداد) VALUES (?, ?, 1)", (str(interaction.guild_id), str(role.id)))
+        await db.commit()
+    
+    await interaction.response.send_message(f"✅ تم تعيين رتبة {role.mention} كرتبة مسؤولة عن التذاكر")
+
+@البوت.tree.command(name="تعيين_قناة_البانل", description="تعيين القناة التي سيتم إرسال لوحة التذاكر فيها تلقائياً")
+@app_commands.describe(channel="القناة المراد إرسال البانل فيها")
+async def set_panel_channel(interaction: discord.Interaction, channel: discord.TextChannel):
+    if not interaction.user.guild_permissions.administrator:
+        await interaction.response.send_message("❌ هذا الأمر مخصص للأونر فقط!", ephemeral=True)
+        return
+    
+    async with aiosqlite.connect(مسار_تذاكر_البيانات) as db:
+        await db.execute("INSERT OR REPLACE INTO اعدادات_السيرفر (guild_id, قناة_البانل, تم_الاعداد) VALUES (?, ?, 1)", (str(interaction.guild_id), str(channel.id)))
+        await db.commit()
+    
+    config = await get_ticket_config(interaction.guild_id)
+    if config:
+        embed = discord.Embed(
+            title=config["embed_title"],
+            description=config["embed_description"],
+            color=int(config["embed_color"], 16)
+        )
+        view = TicketButton(config)
+        await channel.send(embed=embed, view=view)
+    
+    await interaction.response.send_message(f"✅ تم تعيين قناة البانل إلى {channel.mention}")
+
+@البوت.tree.command(name="تعيين_قناة_الرسائل", description="تعيين القناة التي سيتم إرسال الرسائل التلقائية فيها")
+@app_commands.describe(channel="القناة المراد إرسال الرسائل التلقائية فيها")
+async def set_auto_channel(interaction: discord.Interaction, channel: discord.TextChannel):
+    if not interaction.user.guild_permissions.administrator:
+        await interaction.response.send_message("❌ هذا الأمر مخصص للأونر فقط!", ephemeral=True)
+        return
+    
+    async with aiosqlite.connect(مسار_تذاكر_البيانات) as db:
+        await db.execute("INSERT OR REPLACE INTO اعدادات_السيرفر (guild_id, قناة_الرسائل_التلقائية, تم_الاعداد) VALUES (?, ?, 1)", (str(interaction.guild_id), str(channel.id)))
+        await db.commit()
+    
+    await interaction.response.send_message(f"✅ تم تعيين قناة الرسائل التلقائية إلى {channel.mention}")
+
+@البوت.tree.command(name="brq", description="عرض إحصائيات عدد رسائلك")
+async def brq(interaction: discord.Interaction):
+    async with aiosqlite.connect(مسار_قاعدة_البيانات) as db:
+        async with db.execute("SELECT اليوم, الاسبوع, الشهر, المجموع FROM رسائل_اللاعبين WHERE user_id = ?", (str(interaction.user.id),)) as cursor:
+            row = await cursor.fetchone()
+    
+    if row is None:
+        اليوم, الاسبوع, الشهر, المجموع = 0, 0, 0, 0
+    else:
+        اليوم, الاسبوع, الشهر, المجموع = row
+    
+    embed = discord.Embed(title=f"📊 إحصائيات رسائل {interaction.user.display_name}", color=0x00FF00)
+    embed.add_field(name="📅 اليوم", value=str(اليوم), inline=True)
+    embed.add_field(name="📆 الأسبوع", value=str(الاسبوع), inline=True)
+    embed.add_field(name="📅 الشهر", value=str(الشهر), inline=True)
+    embed.add_field(name="📊 المجموع الكلي", value=str(المجموع), inline=True)
+    await interaction.response.send_message(embed=embed)
 
 @البوت.tree.command(name="رصيدي", description="عرض رصيدك")
 async def رصيدي(التفاعل: discord.Interaction):
@@ -1039,8 +1236,8 @@ async def تسليم_مهمة(التفاعل: discord.Interaction, رقم_الم
 
 @البوت.tree.command(name="اعطاء_فلوس", description="منح أموال للاعب (للأونر فقط)")
 async def اعطاء_فلوس(التفاعل: discord.Interaction, اللاعب: discord.User, العملات: int = 0, الرصيد: int = 0):
-    if التفاعل.user.id != رتبة_الأونر:
-        await التفاعل.response.send_message("❌ هذا الأمر مخصص لمالك البوت فقط!", ephemeral=True)
+    if not التفاعل.user.guild_permissions.administrator:
+        await التفاعل.response.send_message("❌ هذا الأمر مخصص للأونر فقط!", ephemeral=True)
         return
     معرف_اللاعب = str(اللاعب.id)
     بيانات = await احصل_على_مستخدم(معرف_اللاعب)
@@ -1049,8 +1246,8 @@ async def اعطاء_فلوس(التفاعل: discord.Interaction, اللاعب:
 
 @البوت.tree.command(name="حذف_فريق", description="تصفير بيانات فريق لاعب (للأونر فقط)")
 async def حذف_فريق(التفاعل: discord.Interaction, اللاعب: discord.User):
-    if التفاعل.user.id != رتبة_الأونر:
-        await التفاعل.response.send_message("❌ هذا الأمر مخصص لمالك البوت فقط!", ephemeral=True)
+    if not التفاعل.user.guild_permissions.administrator:
+        await التفاعل.response.send_message("❌ هذا الأمر مخصص للأونر فقط!", ephemeral=True)
         return
     معرف_اللاعب = str(اللاعب.id)
     async with aiosqlite.connect(مسار_قاعدة_البيانات) as قاعدة:
@@ -1062,8 +1259,8 @@ async def حذف_فريق(التفاعل: discord.Interaction, اللاعب: dis
 
 @البوت.tree.command(name="اذاعة", description="إرسال رسالة لجميع مستخدمي البوت (للأونر فقط)")
 async def اذاعة(التفاعل: discord.Interaction, الرسالة: str):
-    if التفاعل.user.id != رتبة_الأونر:
-        await التفاعل.response.send_message("❌ هذا الأمر مخصص لمالك البوت فقط!", ephemeral=True)
+    if not التفاعل.user.guild_permissions.administrator:
+        await التفاعل.response.send_message("❌ هذا الأمر مخصص للأونر فقط!", ephemeral=True)
         return
     await التفاعل.response.defer(ephemeral=True)
     المستخدمين = await احصل_على_كل_المستخدمين()
@@ -1154,498 +1351,6 @@ async def اشتري(التفاعل: discord.Interaction, رقم_السلعة: i
     await أضف_إلى_المخزون(المعرف, رقم_السلعة, العدد_النهائي)
     await التفاعل.response.send_message(f"✅ اشتريت {العدد_النهائي} × {السلعة['name']} وتم إضافتها بنجاح إلى مخزنك.")
 
-@البوت.tree.command(name="setup", description="إعداد نظام التذاكر (الأونر فقط)")
-@app_commands.describe(category="الفئة التي ستُنشأ بها التذاكر", log_channel="قناة السجلات", auto_close_hours="عدد ساعات الإغلاق التلقائي")
-async def setup_ticket(interaction: discord.Interaction, category: discord.CategoryChannel, log_channel: discord.TextChannel = None, auto_close_hours: int = 24):
-    if not interaction.user.guild_permissions.administrator:
-        await interaction.response.send_message("❌ هذا الأمر مخصص للأونر فقط!", ephemeral=True)
-        return
-    
-    await save_ticket_config(interaction.guild_id, category_id=str(category.id), log_channel_id=str(log_channel.id) if log_channel else None, auto_close_hours=auto_close_hours)
-    
-    embed = discord.Embed(
-        title="🛡️ فتح تذكرة جديدة",
-        description="اضغط على الزر أدناه لفتح تذكرة وسيقوم فريق الدعم بالتواصل معك قريباً.",
-        color=0x5865F2
-    )
-    config = await get_ticket_config(interaction.guild_id)
-    view = TicketButton(config)
-    
-    panel_msg = await interaction.channel.send(embed=embed, view=view)
-    await save_ticket_config(interaction.guild_id, panel_channel_id=str(interaction.channel.id), panel_message_id=str(panel_msg.id))
-    
-    await interaction.response.send_message(f"✅ تم إعداد نظام التذاكر بنجاح!\n- الفئة: {category.mention}\n- قناة السجلات: {log_channel.mention if log_channel else 'لم يتم تعيينها'}\n- الإغلاق التلقائي: {auto_close_hours} ساعة", ephemeral=True)
-
-@البوت.tree.command(name="panel", description="إعادة إرسال لوحة التذاكر")
-async def panel(interaction: discord.Interaction):
-    if not interaction.user.guild_permissions.administrator:
-        await interaction.response.send_message("❌ هذا الأمر مخصص للأونر فقط!", ephemeral=True)
-        return
-    
-    config = await get_ticket_config(interaction.guild_id)
-    if not config:
-        await interaction.response.send_message("❌ يرجى تشغيل `/setup` أولاً!", ephemeral=True)
-        return
-    
-    embed = discord.Embed(
-        title=config["embed_title"],
-        description=config["embed_description"],
-        color=int(config["embed_color"], 16)
-    )
-    view = TicketButton(config)
-    
-    panel_msg = await interaction.channel.send(embed=embed, view=view)
-    await save_ticket_config(interaction.guild_id, panel_channel_id=str(interaction.channel.id), panel_message_id=str(panel_msg.id))
-    await interaction.response.send_message("✅ تم إرسال لوحة التذاكر!", ephemeral=True)
-
-@البوت.tree.command(name="addadmin", description="إضافة رتبة أونر مساعد")
-@app_commands.describe(role="الرتبة المراد إضافتها")
-async def add_admin(interaction: discord.Interaction, role: discord.Role):
-    if not interaction.user.guild_permissions.administrator:
-        await interaction.response.send_message("❌ هذا الأمر مخصص للأونر فقط!", ephemeral=True)
-        return
-    
-    await add_staff_role(interaction.guild_id, role.id, "admin")
-    await interaction.response.send_message(f"✅ تم إضافة رتبة {role.mention} كمساعد أونر")
-
-@البوت.tree.command(name="removeadmin", description="إزالة رتبة أونر مساعد")
-@app_commands.describe(role="الرتبة المراد إزالتها")
-async def remove_admin(interaction: discord.Interaction, role: discord.Role):
-    if not interaction.user.guild_permissions.administrator:
-        await interaction.response.send_message("❌ هذا الأمر مخصص للأونر فقط!", ephemeral=True)
-        return
-    
-    await remove_staff_role(interaction.guild_id, role.id)
-    await interaction.response.send_message(f"✅ تم إزالة رتبة {role.mention} من مساعدي الأونر")
-
-@البوت.tree.command(name="addsupport", description="إضافة رتبة دعم")
-@app_commands.describe(role="الرتبة المراد إضافتها")
-async def add_support(interaction: discord.Interaction, role: discord.Role):
-    if not interaction.user.guild_permissions.administrator:
-        await interaction.response.send_message("❌ هذا الأمر مخصص للأونر فقط!", ephemeral=True)
-        return
-    
-    await add_staff_role(interaction.guild_id, role.id, "support")
-    await interaction.response.send_message(f"✅ تم إضافة رتبة {role.mention} كفريق دعم")
-
-@البوت.tree.command(name="removesupport", description="إزالة رتبة دعم")
-@app_commands.describe(role="الرتبة المراد إزالتها")
-async def remove_support(interaction: discord.Interaction, role: discord.Role):
-    if not interaction.user.guild_permissions.administrator:
-        await interaction.response.send_message("❌ هذا الأمر مخصص للأونر فقط!", ephemeral=True)
-        return
-    
-    await remove_staff_role(interaction.guild_id, role.id)
-    await interaction.response.send_message(f"✅ تم إزالة رتبة {role.mention} من فريق الدعم")
-
-@البوت.tree.command(name="viewstaff", description="عرض قائمة الموظفين")
-async def view_staff(interaction: discord.Interaction):
-    if not interaction.user.guild_permissions.administrator:
-        await interaction.response.send_message("❌ هذا الأمر مخصص للأونر فقط!", ephemeral=True)
-        return
-    
-    staff_roles = await get_all_staff_roles(interaction.guild_id)
-    if not staff_roles:
-        await interaction.response.send_message("لا يوجد موظفين مسجلين!", ephemeral=True)
-        return
-    
-    admins = []
-    supports = []
-    for role_id, role_type in staff_roles:
-        role = interaction.guild.get_role(int(role_id))
-        if role:
-            if role_type == "admin":
-                admins.append(role.mention)
-            else:
-                supports.append(role.mention)
-    
-    embed = discord.Embed(title="👥 قائمة الموظفين", color=0x5865F2)
-    embed.add_field(name="👑 المساعدين", value="\n".join(admins) or "لا يوجد", inline=False)
-    embed.add_field(name="🛡️ فريق الدعم", value="\n".join(supports) or "لا يوجد", inline=False)
-    await interaction.response.send_message(embed=embed, ephemeral=True)
-
-@البوت.tree.command(name="blacklist", description="حظر مستخدم من استخدام التذاكر")
-@app_commands.describe(user="المستخدم المراد حظره", reason="سبب الحظر")
-async def blacklist_user(interaction: discord.Interaction, user: discord.User, reason: str = "لا يوجد سبب"):
-    if not interaction.user.guild_permissions.administrator:
-        await interaction.response.send_message("❌ هذا الأمر مخصص للأونر فقط!", ephemeral=True)
-        return
-    
-    await add_to_blacklist(interaction.guild_id, user.id, reason, interaction.user.id)
-    await interaction.response.send_message(f"✅ تم حظر {user.mention} من استخدام نظام التذاكر\n**السبب:** {reason}")
-
-@البوت.tree.command(name="unblacklist", description="إلغاء حظر مستخدم من التذاكر")
-@app_commands.describe(user="المستخدم المراد إلغاء حظره")
-async def unblacklist_user(interaction: discord.Interaction, user: discord.User):
-    if not interaction.user.guild_permissions.administrator:
-        await interaction.response.send_message("❌ هذا الأمر مخصص للأونر فقط!", ephemeral=True)
-        return
-    
-    await remove_from_blacklist(interaction.guild_id, user.id)
-    await interaction.response.send_message(f"✅ تم إلغاء حظر {user.mention} من استخدام نظام التذاكر")
-
-@البوت.tree.command(name="stats", description="إحصائيات نظام التذاكر")
-async def stats_ticket(interaction: discord.Interaction):
-    async with aiosqlite.connect(مسار_تذاكر_البيانات) as db:
-        async with db.execute("SELECT COUNT(*) FROM tickets WHERE guild_id = ?", (str(interaction.guild_id),)) as cursor:
-            total = (await cursor.fetchone())[0]
-        
-        async with db.execute("SELECT COUNT(*) FROM tickets WHERE guild_id = ? AND status = 'open'", (str(interaction.guild_id),)) as cursor:
-            open_tickets = (await cursor.fetchone())[0]
-        
-        async with db.execute("SELECT COUNT(*) FROM tickets WHERE guild_id = ? AND status = 'claimed'", (str(interaction.guild_id),)) as cursor:
-            claimed = (await cursor.fetchone())[0]
-        
-        async with db.execute("SELECT COUNT(*) FROM tickets WHERE guild_id = ? AND status = 'closed'", (str(interaction.guild_id),)) as cursor:
-            closed = (await cursor.fetchone())[0]
-    
-    embed = discord.Embed(title="📊 إحصائيات التذاكر", color=0x5865F2)
-    embed.add_field(name="📋 إجمالي التذاكر", value=str(total), inline=True)
-    embed.add_field(name="🟢 مفتوحة", value=str(open_tickets), inline=True)
-    embed.add_field(name="🟡 مستلمة", value=str(claimed), inline=True)
-    embed.add_field(name="🔴 مغلقة", value=str(closed), inline=True)
-    await interaction.response.send_message(embed=embed)
-
-@البوت.tree.command(name="add", description="إضافة مستخدم إلى التذكرة")
-@app_commands.describe(user="المستخدم المراد إضافته")
-async def add_user(interaction: discord.Interaction, user: discord.Member):
-    if not await is_authorized_staff(interaction.user, interaction.guild_id) and str(interaction.user.id) != (await get_ticket_info(interaction.channel.id))["creator_id"]:
-        await interaction.response.send_message("❌ ليس لديك صلاحية لإضافة مستخدمين!", ephemeral=True)
-        return
-    
-    overwrite = interaction.channel.overwrites_for(user)
-    overwrite.read_messages = True
-    overwrite.send_messages = True
-    await interaction.channel.set_permissions(user, overwrite=overwrite)
-    await interaction.response.send_message(f"✅ تم إضافة {user.mention} إلى هذه التذكرة")
-
-@البوت.tree.command(name="remove", description="إزالة مستخدم من التذكرة")
-@app_commands.describe(user="المستخدم المراد إزالته")
-async def remove_user(interaction: discord.Interaction, user: discord.Member):
-    if not await is_authorized_staff(interaction.user, interaction.guild_id) and str(interaction.user.id) != (await get_ticket_info(interaction.channel.id))["creator_id"]:
-        await interaction.response.send_message("❌ ليس لديك صلاحية لإزالة مستخدمين!", ephemeral=True)
-        return
-    
-    await interaction.channel.set_permissions(user, overwrite=None)
-    await interaction.response.send_message(f"✅ تم إزالة {user.mention} من هذه التذكرة")
-
-@البوت.tree.command(name="rename", description="تغيير اسم التذكرة")
-@app_commands.describe(new_name="الاسم الجديد للتذكرة")
-async def rename_ticket(interaction: discord.Interaction, new_name: str):
-    if not await is_authorized_staff(interaction.user, interaction.guild_id):
-        await interaction.response.send_message("❌ ليس لديك صلاحية لتغيير اسم التذكرة!", ephemeral=True)
-        return
-    
-    await interaction.channel.edit(name=new_name[:100])
-    await interaction.response.send_message(f"✅ تم تغيير اسم التذكرة إلى: {new_name}")
-
-@البوت.tree.command(name="reopen", description="إعادة فتح تذكرة مغلقة")
-async def reopen_ticket(interaction: discord.Interaction):
-    if not await is_authorized_staff(interaction.user, interaction.guild_id):
-        await interaction.response.send_message("❌ ليس لديك صلاحية لإعادة فتح التذكرة!", ephemeral=True)
-        return
-    
-    ticket_info = await get_ticket_info(interaction.channel.id)
-    if not ticket_info or ticket_info["status"] != "closed":
-        await interaction.response.send_message("❌ هذه التذكرة غير مغلقة أو غير موجودة!", ephemeral=True)
-        return
-    
-    await update_ticket_status(interaction.channel.id, "reopened")
-    
-    overwrite = interaction.channel.overwrites_for(interaction.guild.default_role)
-    overwrite.send_messages = True
-    await interaction.channel.set_permissions(interaction.guild.default_role, overwrite=overwrite)
-    
-    if ticket_info["creator_id"]:
-        creator = interaction.guild.get_member(int(ticket_info["creator_id"]))
-        if creator:
-            overwrite_creator = interaction.channel.overwrites_for(creator)
-            overwrite_creator.send_messages = True
-            await interaction.channel.set_permissions(creator, overwrite=overwrite_creator)
-    
-    embed = discord.Embed(title="🔄 تم إعادة فتح التذكرة", color=0x00FF00)
-    await interaction.response.send_message(embed=embed)
-
-@البوت.tree.command(name="claim", description="استلام تذكرة")
-async def claim_ticket(interaction: discord.Interaction):
-    if not await is_authorized_staff(interaction.user, interaction.guild_id):
-        await interaction.response.send_message("❌ ليس لديك صلاحية لاستلام التذكرة!", ephemeral=True)
-        return
-    
-    ticket_info = await get_ticket_info(interaction.channel.id)
-    if not ticket_info:
-        await interaction.response.send_message("❌ حدث خطأ في التذكرة!", ephemeral=True)
-        return
-    
-    if ticket_info["status"] == "claimed":
-        await interaction.response.send_message(f"❌ هذه التذكرة تم استلامها بالفعل بواسطة <@{ticket_info['claimer_id']}>", ephemeral=True)
-        return
-    
-    await update_ticket_status(interaction.channel.id, "claimed", str(interaction.user.id))
-    await interaction.response.send_message(f"✅ تم استلام التذكرة بواسطة {interaction.user.mention}")
-
-@البوت.tree.command(name="unclaim", description="إلغاء استلام التذكرة")
-async def unclaim_ticket(interaction: discord.Interaction):
-    if not await is_authorized_staff(interaction.user, interaction.guild_id):
-        await interaction.response.send_message("❌ ليس لديك صلاحية لإلغاء استلام التذكرة!", ephemeral=True)
-        return
-    
-    ticket_info = await get_ticket_info(interaction.channel.id)
-    if not ticket_info or ticket_info["status"] != "claimed" or ticket_info["claimer_id"] != str(interaction.user.id):
-        await interaction.response.send_message("❌ لم تقم باستلام هذه التذكرة!", ephemeral=True)
-        return
-    
-    await update_ticket_status(interaction.channel.id, "open")
-    await interaction.response.send_message(f"✅ تم إلغاء استلام التذكرة بواسطة {interaction.user.mention}")
-
-@البوت.tree.command(name="close", description="إغلاق التذكرة الحالية")
-async def close_ticket(interaction: discord.Interaction, reason: str = None):
-    if not await is_authorized_staff(interaction.user, interaction.guild_id) and str(interaction.user.id) != (await get_ticket_info(interaction.channel.id))["creator_id"]:
-        await interaction.response.send_message("❌ ليس لديك صلاحية لإغلاق هذه التذكرة!", ephemeral=True)
-        return
-    
-    ticket_info = await get_ticket_info(interaction.channel.id)
-    if ticket_info["status"] == "closed":
-        await interaction.response.send_message("❌ هذه التذكرة مغلقة بالفعل!", ephemeral=True)
-        return
-    
-    await update_ticket_status(interaction.channel.id, "closed", closed_by=str(interaction.user.id), reason=reason)
-    
-    overwrite = interaction.channel.overwrites_for(interaction.guild.default_role)
-    overwrite.send_messages = False
-    await interaction.channel.set_permissions(interaction.guild.default_role, overwrite=overwrite)
-    
-    if ticket_info["creator_id"]:
-        creator = interaction.guild.get_member(int(ticket_info["creator_id"]))
-        if creator:
-            overwrite_creator = interaction.channel.overwrites_for(creator)
-            overwrite_creator.send_messages = False
-            await interaction.channel.set_permissions(creator, overwrite=overwrite_creator)
-    
-    reason_text = f"\n**السبب:** {reason}" if reason else ""
-    embed = discord.Embed(title="🔒 تم إغلاق التذكرة", description=f"تم الإغلاق بواسطة {interaction.user.mention}{reason_text}", color=0xFF0000)
-    await interaction.response.send_message(embed=embed)
-
-@البوت.tree.command(name="closerequest", description="طلب إغلاق التذكرة من فريق الدعم")
-async def closerequest(interaction: discord.Interaction, reason: str = None):
-    ticket_info = await get_ticket_info(interaction.channel.id)
-    if not ticket_info or ticket_info["creator_id"] != str(interaction.user.id):
-        await interaction.response.send_message("❌ هذه التذكرة ليست ملكك!", ephemeral=True)
-        return
-    
-    reason_text = f"**السبب:** {reason}" if reason else ""
-    embed = discord.Embed(title="🔒 طلب إغلاق", description=f"صاحب التذكرة {interaction.user.mention} يطلب إغلاق التذكرة.\n{reason_text}", color=0xFFA500)
-    await interaction.response.send_message(embed=embed)
-
-@البوت.tree.command(name="notes", description="عرض ملاحظات التذكرة")
-async def notes_ticket(interaction: discord.Interaction):
-    if not await is_authorized_staff(interaction.user, interaction.guild_id):
-        await interaction.response.send_message("❌ ليس لديك صلاحية لعرض الملاحظات!", ephemeral=True)
-        return
-    
-    await interaction.response.send_message("📝 **الملاحظات:**\n*سيتم عرض الملاحظات هنا.*", ephemeral=True)
-
-@البوت.tree.command(name="on-call", description="عرض الموظفين المتاحين")
-async def on_call(interaction: discord.Interaction):
-    staff_roles = await get_all_staff_roles(interaction.guild_id)
-    if not staff_roles:
-        await interaction.response.send_message("لا يوجد موظفين مسجلين!", ephemeral=True)
-        return
-    
-    staff_list = []
-    for role_id, role_type in staff_roles:
-        role = interaction.guild.get_role(int(role_id))
-        if role:
-            staff_list.append(f"{role.mention} ({role_type})")
-    
-    embed = discord.Embed(title="👥 قائمة الموظفين", description="\n".join(staff_list) or "لا يوجد موظفين", color=0x5865F2)
-    await interaction.response.send_message(embed=embed, ephemeral=True)
-
-@البوت.tree.command(name="open", description="فتح تذكرة جديدة")
-async def open_ticket(interaction: discord.Interaction):
-    config = await get_ticket_config(interaction.guild_id)
-    if not config or not config["panel_channel_id"]:
-        await interaction.response.send_message("❌ نظام التذاكر لم يتم إعداده بعد!", ephemeral=True)
-        return
-    
-    panel_channel = interaction.guild.get_channel(int(config["panel_channel_id"]))
-    if not panel_channel:
-        await interaction.response.send_message("❌ قناة لوحة التذاكر غير موجودة!", ephemeral=True)
-        return
-    
-    await panel_channel.send("🎫 **فتح تذكرة جديدة**\nاستخدم الزر أدناه", view=TicketButton(config))
-    await interaction.response.send_message("✅ تم إرسال زر فتح التذكرة!", ephemeral=True)
-
-@البوت.tree.command(name="switchpanel", description="تبديل لوحة التذاكر")
-@app_commands.describe(channel="القناة الجديدة للوحة")
-async def switchpanel(interaction: discord.Interaction, channel: discord.TextChannel):
-    if not interaction.user.guild_permissions.administrator:
-        await interaction.response.send_message("❌ هذا الأمر مخصص للأونر فقط!", ephemeral=True)
-        return
-    
-    await save_ticket_config(interaction.guild_id, panel_channel_id=str(channel.id))
-    await interaction.response.send_message(f"✅ تم تبديل لوحة التذاكر إلى {channel.mention}")
-
-@البوت.tree.command(name="transfer", description="نقل التذكرة إلى موظف آخر")
-@app_commands.describe(user="الموظف المستهدف")
-async def transfer_ticket(interaction: discord.Interaction, user: discord.Member):
-    if not await is_authorized_staff(interaction.user, interaction.guild_id):
-        await interaction.response.send_message("❌ ليس لديك صلاحية لنقل التذكرة!", ephemeral=True)
-        return
-    
-    if not await is_authorized_staff(user, interaction.guild_id):
-        await interaction.response.send_message("❌ المستخدم المستهدف ليس موظفاً!", ephemeral=True)
-        return
-    
-    await update_ticket_status(interaction.channel.id, "claimed", str(user.id))
-    await interaction.response.send_message(f"✅ تم نقل التذكرة إلى {user.mention}")
-
-@البوت.tree.command(name="edit", description="تعديل رسالة الإعدادات")
-@app_commands.describe(title="العنوان الجديد", description="الوصف الجديد", color="اللون (Hex)")
-async def edit_panel(interaction: discord.Interaction, title: str = None, description: str = None, color: str = None):
-    if not interaction.user.guild_permissions.administrator:
-        await interaction.response.send_message("❌ هذا الأمر مخصص للأونر فقط!", ephemeral=True)
-        return
-    
-    config = await get_ticket_config(interaction.guild_id)
-    if not config:
-        await interaction.response.send_message("❌ لم يتم إعداد البوت بعد!", ephemeral=True)
-        return
-    
-    new_title = title or config["embed_title"]
-    new_desc = description or config["embed_description"]
-    new_color = color or config["embed_color"]
-    
-    await save_ticket_config(interaction.guild_id, embed_title=new_title, embed_description=new_desc, embed_color=new_color)
-    
-    if config["panel_channel_id"] and config["panel_message_id"]:
-        panel_channel = interaction.guild.get_channel(int(config["panel_channel_id"]))
-        if panel_channel:
-            try:
-                panel_msg = await panel_channel.fetch_message(int(config["panel_message_id"]))
-                embed = discord.Embed(title=new_title, description=new_desc, color=int(new_color, 16))
-                await panel_msg.edit(embed=embed)
-            except:
-                pass
-    
-    await interaction.response.send_message("✅ تم تحديث رسالة الإعدادات بنجاح!")
-
-@البوت.tree.command(name="about", description="معلومات عن البوت")
-async def about(interaction: discord.Interaction):
-    embed = discord.Embed(
-        title="🤖 معلومات عن البوت",
-        description="بوت متخصص في إدارة التذاكر لدعم السيرفرات",
-        color=0x5865F2
-    )
-    embed.add_field(name="📦 الإصدار", value="1.0.0", inline=True)
-    embed.add_field(name="👑 المطور", value=اسم_المطور, inline=True)
-    embed.add_field(name="📞 التواصل", value=معرف_المطور, inline=True)
-    await interaction.response.send_message(embed=embed)
-
-@البوت.tree.command(name="gdpr", description="إدارة بياناتك (حذف بيانات التذاكر)")
-async def gdpr(interaction: discord.Interaction):
-    async with aiosqlite.connect(مسار_تذاكر_البيانات) as db:
-        await db.execute("DELETE FROM tickets WHERE creator_id = ?", (str(interaction.user.id),))
-        await db.commit()
-    await interaction.response.send_message("✅ تم حذف جميع بيانات تذاكرك بنجاح!", ephemeral=True)
-
-@البوت.tree.command(name="invite", description="رابط دعوة البوت")
-async def invite(interaction: discord.Interaction):
-    embed = discord.Embed(
-        title="🔗 رابط دعوة البوت",
-        description=f"[اضغط هنا لدعوة البوت](https://discord.com/oauth2/authorize?client_id={البوت.user.id}&permissions=8&scope=bot%20applications.commands)",
-        color=0x5865F2
-    )
-    await interaction.response.send_message(embed=embed)
-
-@البوت.tree.command(name="jumptotop", description="الانتقال إلى أعلى التذكرة")
-async def jumptotop(interaction: discord.Interaction):
-    await interaction.response.send_message("⬆️ انتقل إلى أعلى", ephemeral=True)
-    messages = [message async for message in interaction.channel.history(limit=1, oldest_first=True)]
-    if messages:
-        await interaction.followup.send(f"انتقل إلى [أول رسالة]({messages[0].jump_url})", ephemeral=True)
-
-@البوت.tree.command(name="autoclose", description="إعداد الإغلاق التلقائي للتذاكر")
-@app_commands.describe(enabled="تفعيل/تعطيل", hours="عدد الساعات")
-async def auto_close(interaction: discord.Interaction, enabled: bool, hours: int = 24):
-    if not interaction.user.guild_permissions.administrator:
-        await interaction.response.send_message("❌ هذا الأمر مخصص للأونر فقط!", ephemeral=True)
-        return
-    
-    await save_ticket_config(interaction.guild_id, auto_close_hours=hours if enabled else 0)
-    await interaction.response.send_message(f"✅ تم {'تفعيل' if enabled else 'تعطيل'} الإغلاق التلقائي لمدة {hours} ساعة")
-
-@البوت.tree.command(name="language", description="تغيير لغة البوت")
-@app_commands.choices(lang=[
-    app_commands.Choice(name="العربية", value="ar"),
-    app_commands.Choice(name="English", value="en")
-])
-async def set_language(interaction: discord.Interaction, lang: str):
-    if not interaction.user.guild_permissions.administrator:
-        await interaction.response.send_message("❌ هذا الأمر مخصص للأونر فقط!", ephemeral=True)
-        return
-    
-    async with aiosqlite.connect(مسار_تذاكر_البيانات) as db:
-        await db.execute("INSERT OR REPLACE INTO language_settings (guild_id, language) VALUES (?, ?)", (str(interaction.guild_id), lang))
-        await db.commit()
-    
-    await interaction.response.send_message(f"✅ تم تغيير اللغة إلى {'العربية' if lang == 'ar' else 'English'}")
-
-@البوت.tree.command(name="managetags", description="إدارة العلامات السريعة")
-@app_commands.choices(action=[
-    app_commands.Choice(name="إضافة", value="add"),
-    app_commands.Choice(name="حذف", value="remove"),
-    app_commands.Choice(name="عرض", value="list")
-])
-@app_commands.describe(action="الإجراء", name="اسم العلامة", content="محتوى العلامة")
-async def manage_tags(interaction: discord.Interaction, action: str, name: str = None, content: str = None):
-    if not interaction.user.guild_permissions.administrator:
-        await interaction.response.send_message("❌ هذا الأمر مخصص للأونر فقط!", ephemeral=True)
-        return
-    
-    if action == "add":
-        if not name or not content:
-            await interaction.response.send_message("❌ يرجى إدخال اسم العلامة والمحتوى!", ephemeral=True)
-            return
-        async with aiosqlite.connect(مسار_تذاكر_البيانات) as db:
-            await db.execute("INSERT OR REPLACE INTO tags (guild_id, tag_name, tag_content, created_by) VALUES (?, ?, ?, ?)", 
-                            (str(interaction.guild_id), name.lower(), content, str(interaction.user.id)))
-            await db.commit()
-        await interaction.response.send_message(f"✅ تم إضافة العلامة `{name}`")
-    
-    elif action == "remove":
-        if not name:
-            await interaction.response.send_message("❌ يرجى إدخال اسم العلامة!", ephemeral=True)
-            return
-        async with aiosqlite.connect(مسار_تذاكر_البيانات) as db:
-            await db.execute("DELETE FROM tags WHERE guild_id = ? AND tag_name = ?", (str(interaction.guild_id), name.lower()))
-            await db.commit()
-        await interaction.response.send_message(f"✅ تم حذف العلامة `{name}`")
-    
-    elif action == "list":
-        async with aiosqlite.connect(مسار_تذاكر_البيانات) as db:
-            async with db.execute("SELECT tag_name FROM tags WHERE guild_id = ?", (str(interaction.guild_id),)) as cursor:
-                tags = await cursor.fetchall()
-        if not tags:
-            await interaction.response.send_message("لا توجد علامات محفوظة!", ephemeral=True)
-            return
-        tag_list = "\n".join([f"• `{tag[0]}`" for tag in tags])
-        await interaction.response.send_message(f"**📋 قائمة العلامات:**\n{tag_list}", ephemeral=True)
-
-@البوت.tree.command(name="tag", description="استخدام علامة سريعة")
-@app_commands.describe(name="اسم العلامة")
-async def use_tag(interaction: discord.Interaction, name: str):
-    async with aiosqlite.connect(مسار_تذاكر_البيانات) as db:
-        async with db.execute("SELECT tag_content FROM tags WHERE guild_id = ? AND tag_name = ?", (str(interaction.guild_id), name.lower())) as cursor:
-            row = await cursor.fetchone()
-    
-    if not row:
-        await interaction.response.send_message(f"❌ العلامة `{name}` غير موجودة!", ephemeral=True)
-        return
-    
-    embed = discord.Embed(title=f"🏷️ {name}", description=row[0], color=0x5865F2)
-    await interaction.response.send_message(embed=embed)
-
 @البوت.event
 async def on_ready():
     print(f"✅ تم تشغيل البوت بنجاح باسم: {البوت.user}")
@@ -1656,6 +1361,9 @@ async def on_ready():
         print(f"🔄 تم مزامنة {len(المزامنة)} من الأوامر المائلة Slash Commands!")
     except Exception as e:
         print(f"❌ فشل مزامنة الأوامر المائلة: {e}")
+    
+    asyncio.create_task(ارسال_البانل_تلقائيا())
+    asyncio.create_task(ارسال_رسائل_تلقائية())
 
 if __name__ == "__main__":
     خيط_الويب = threading.Thread(target=تشغيل_الخادم)
