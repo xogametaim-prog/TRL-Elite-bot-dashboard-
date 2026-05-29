@@ -2,9 +2,17 @@
 import discord
 from discord.ext import commands
 import asyncio
-import time
 
 رتبة_التذاكر_المسموح_لها = 0
+
+async def is_authorized(user):
+    if user.guild_permissions.administrator:
+        return True
+    if رتبة_التذاكر_المسموح_لها:
+        role = user.guild.get_role(رتبة_التذاكر_المسموح_لها)
+        if role and role in user.roles:
+            return True
+    return False
 
 class تأكيد_الإغلاق(discord.ui.View):
     def __init__(self, channel, user):
@@ -37,28 +45,23 @@ class TicketControlView(discord.ui.View):
     
     @discord.ui.button(label="📌 استلام التذكرة", style=discord.ButtonStyle.success)
     async def claim(self, interaction: discord.Interaction, button: discord.ui.Button):
-        if not await self.is_authorized(interaction.user):
-            await interaction.response.send_message("❌ ليس لديك صلاحية!", ephemeral=True)
+        if not await is_authorized(interaction.user):
+            await interaction.response.send_message("❌ ليس لديك صلاحية لاستلام هذه التذكرة!", ephemeral=True)
             return
         await interaction.response.send_message(f"✅ تم استلام التذكرة بواسطة {interaction.user.mention}")
     
     @discord.ui.button(label="🔒 إغلاق التذكرة", style=discord.ButtonStyle.danger)
     async def close(self, interaction: discord.Interaction, button: discord.ui.Button):
-        if not await self.is_authorized(interaction.user) and str(interaction.user.id) != self.creator_id:
-            await interaction.response.send_message("❌ ليس لديك صلاحية!", ephemeral=True)
+        if not await is_authorized(interaction.user) and str(interaction.user.id) != self.creator_id:
+            await interaction.response.send_message("❌ ليس لديك صلاحية لإغلاق هذه التذكرة!", ephemeral=True)
             return
         view = تأكيد_الإغلاق(interaction.channel, interaction.user)
-        embed = discord.Embed(title="⚠️ تأكيد الإغلاق", description="هل أنت متأكد أنك تريد حذف هذه التذكرة؟", color=0xFFA500)
+        embed = discord.Embed(
+            title="⚠️ تأكيد إغلاق التذكرة",
+            description="هل أنت متأكد أنك تريد إغلاق وحذف هذه التذكرة؟ هذا الإجراء لا يمكن التراجع عنه.",
+            color=0xFFA500
+        )
         await interaction.response.send_message(embed=embed, view=view, ephemeral=True)
-    
-    async def is_authorized(self, user):
-        if user.guild_permissions.administrator:
-            return True
-        if رتبة_التذاكر_المسموح_لها:
-            role = user.guild.get_role(رتبة_التذاكر_المسموح_لها)
-            if role and role in user.roles:
-                return True
-        return False
 
 class TicketButton(discord.ui.View):
     def __init__(self):
