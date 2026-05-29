@@ -27,6 +27,7 @@ if التوكن is None:
     sys.exit(1)
 
 رتبة_الأونر = 1507815463172833331
+رتبة_الدعم_المسموح_لها = 123456789012345678
 قناة_التسجيل = None
 
 عملات_البداية = 1000
@@ -279,17 +280,11 @@ async def log_ticket_event(bot, guild_id, event_type, details):
     embed = discord.Embed(title=f"📋 {event_type}", description=details, color=0x5865F2, timestamp=datetime.now())
     await log_channel.send(embed=embed)
 
-async def is_staff(member, guild_id):
+async def is_authorized_staff(member, guild_id):
     if member.guild_permissions.administrator:
         return True
-    
-    async with aiosqlite.connect(مسار_تذاكر_البيانات) as db:
-        async with db.execute("SELECT role_id FROM staff_roles WHERE guild_id = ? AND role_type = 'support'", (str(guild_id),)) as cursor:
-            support_roles = await cursor.fetchall()
-            for role_id in support_roles:
-                role = member.guild.get_role(int(role_id[0]))
-                if role and role in member.roles:
-                    return True
+    if رتبة_الدعم_المسموح_لها and member.guild.get_role(رتبة_الدعم_المسموح_لها) in member.roles:
+        return True
     return False
 
 async def is_blacklisted(guild_id, user_id):
@@ -334,6 +329,11 @@ async def update_ticket_status(channel_id, status, claimer_id=None, closed_by=No
             await db.execute("UPDATE tickets SET status = ?, closed_at = NULL, closed_by = NULL, reason = NULL WHERE channel_id = ?", (status, str(channel_id)))
         else:
             await db.execute("UPDATE tickets SET status = ? WHERE channel_id = ?", (status, str(channel_id)))
+        await db.commit()
+
+async def delete_ticket_record(channel_id):
+    async with aiosqlite.connect(مسار_تذاكر_البيانات) as db:
+        await db.execute("DELETE FROM tickets WHERE channel_id = ?", (str(channel_id),))
         await db.commit()
 
 async def create_ticket_record(guild_id, channel_id, creator_id, creator_name):
@@ -399,13 +399,44 @@ class TicketButton(discord.ui.View):
         
         await log_ticket_event(interaction.client, interaction.guild_id, "تذكرة جديدة", f"المستخدم: {interaction.user.mention}\nالقناة: {channel.mention}")
 
+class تأكيد_الإغلاق(discord.ui.View):
+    def __init__(self, channel, user):
+        super().__init__(timeout=60)
+        self.channel = channel
+        self.user = user
+    
+    @discord.ui.button(label="نعم، أغلق التذكرة", style=discord.ButtonStyle.danger)
+    async def confirm_button(self, interaction: discord.Interaction, button: discord.ui.Button):
+        if interaction.user != self.user:
+            await interaction.response.send_message("❌ هذا التأكيد ليس لك!", ephemeral=True)
+            return
+        
+        embed = discord.Embed(
+            title="🔒 تم حذف التذكرة",
+            description=f"تم حذف هذه التذكرة بواسطة {interaction.user.mention}",
+            color=0xFF0000
+        )
+        await interaction.response.send_message(embed=embed)
+        
+        await delete_ticket_record(str(self.channel.id))
+        await self.channel.delete()
+    
+    @discord.ui.button(label="لا، إلغاء", style=discord.ButtonStyle.secondary)
+    async def cancel_button(self, interaction: discord.Interaction, button: discord.ui.Button):
+        if interaction.user != self.user:
+            await interaction.response.send_message("❌ هذا التأكيد ليس لك!", ephemeral=True)
+            return
+        
+        await interaction.response.send_message("✅ تم إلغاء عملية إغلاق التذكرة.", ephemeral=True)
+        self.stop()
+
 class TicketControlView(discord.ui.View):
     def __init__(self):
         super().__init__(timeout=None)
     
     @discord.ui.button(label="📌 استلام التذكرة", style=discord.ButtonStyle.success, custom_id="claim_ticket")
     async def claim_button(self, interaction: discord.Interaction, button: discord.ui.Button):
-        if not await is_staff(interaction.user, interaction.guild_id):
+        if not await is_authorized_staff(interaction.user, interaction.guild_id):
             await interaction.response.send_message("❌ ليس لديك صلاحية لاستلام هذه التذكرة!", ephemeral=True)
             return
         
@@ -431,36 +462,17 @@ class TicketControlView(discord.ui.View):
     
     @discord.ui.button(label="🔒 إغلاق التذكرة", style=discord.ButtonStyle.danger, custom_id="close_ticket")
     async def close_button(self, interaction: discord.Interaction, button: discord.ui.Button):
-        if not await is_staff(interaction.user, interaction.guild_id) and str(interaction.user.id) != (await get_ticket_info(interaction.channel.id))["creator_id"]:
+        if not await is_authorized_staff(interaction.user, interaction.guild_id):
             await interaction.response.send_message("❌ ليس لديك صلاحية لإغلاق هذه التذكرة!", ephemeral=True)
             return
         
-        ticket_info = await get_ticket_info(interaction.channel.id)
-        if ticket_info["status"] == "closed":
-            await interaction.response.send_message("❌ هذه التذكرة مغلقة بالفعل!", ephemeral=True)
-            return
-        
-        await update_ticket_status(interaction.channel.id, "closed", closed_by=str(interaction.user.id))
-        
+        view = تأكيد_الإغلاق(interaction.channel, interaction.user)
         embed = discord.Embed(
-            title="🔒 تم إغلاق التذكرة",
-            description=f"تم إغلاق هذه التذكرة بواسطة {interaction.user.mention}\nيمكنك استخدام `/reopen` لإعادة فتحها إذا لزم الأمر.",
-            color=0xFF0000
+            title="⚠️ تأكيد إغلاق التذكرة",
+            description="هل أنت متأكد أنك تريد إغلاق وحذف هذه التذكرة؟ هذا الإجراء لا يمكن التراجع عنه.",
+            color=0xFFA500
         )
-        await interaction.response.send_message(embed=embed)
-        
-        overwrite = interaction.channel.overwrites_for(interaction.guild.default_role)
-        overwrite.send_messages = False
-        await interaction.channel.set_permissions(interaction.guild.default_role, overwrite=overwrite)
-        
-        if ticket_info["creator_id"]:
-            creator = interaction.guild.get_member(int(ticket_info["creator_id"]))
-            if creator:
-                overwrite_creator = interaction.channel.overwrites_for(creator)
-                overwrite_creator.send_messages = False
-                await interaction.channel.set_permissions(creator, overwrite=overwrite_creator)
-        
-        await log_ticket_event(interaction.client, interaction.guild_id, "إغلاق تذكرة", f"بواسطة: {interaction.user.mention}\nالقناة: {interaction.channel.mention}")
+        await interaction.response.send_message(embed=embed, view=view, ephemeral=True)
 
 async def احصل_على_مستخدم(المعرف):
     async with aiosqlite.connect(مسار_قاعدة_البيانات) as قاعدة:
@@ -1297,7 +1309,7 @@ async def stats_ticket(interaction: discord.Interaction):
 @البوت.tree.command(name="add", description="إضافة مستخدم إلى التذكرة")
 @app_commands.describe(user="المستخدم المراد إضافته")
 async def add_user(interaction: discord.Interaction, user: discord.Member):
-    if not await is_staff(interaction.user, interaction.guild_id) and str(interaction.user.id) != (await get_ticket_info(interaction.channel.id))["creator_id"]:
+    if not await is_authorized_staff(interaction.user, interaction.guild_id) and str(interaction.user.id) != (await get_ticket_info(interaction.channel.id))["creator_id"]:
         await interaction.response.send_message("❌ ليس لديك صلاحية لإضافة مستخدمين!", ephemeral=True)
         return
     
@@ -1310,7 +1322,7 @@ async def add_user(interaction: discord.Interaction, user: discord.Member):
 @البوت.tree.command(name="remove", description="إزالة مستخدم من التذكرة")
 @app_commands.describe(user="المستخدم المراد إزالته")
 async def remove_user(interaction: discord.Interaction, user: discord.Member):
-    if not await is_staff(interaction.user, interaction.guild_id) and str(interaction.user.id) != (await get_ticket_info(interaction.channel.id))["creator_id"]:
+    if not await is_authorized_staff(interaction.user, interaction.guild_id) and str(interaction.user.id) != (await get_ticket_info(interaction.channel.id))["creator_id"]:
         await interaction.response.send_message("❌ ليس لديك صلاحية لإزالة مستخدمين!", ephemeral=True)
         return
     
@@ -1320,7 +1332,7 @@ async def remove_user(interaction: discord.Interaction, user: discord.Member):
 @البوت.tree.command(name="rename", description="تغيير اسم التذكرة")
 @app_commands.describe(new_name="الاسم الجديد للتذكرة")
 async def rename_ticket(interaction: discord.Interaction, new_name: str):
-    if not await is_staff(interaction.user, interaction.guild_id):
+    if not await is_authorized_staff(interaction.user, interaction.guild_id):
         await interaction.response.send_message("❌ ليس لديك صلاحية لتغيير اسم التذكرة!", ephemeral=True)
         return
     
@@ -1329,7 +1341,7 @@ async def rename_ticket(interaction: discord.Interaction, new_name: str):
 
 @البوت.tree.command(name="reopen", description="إعادة فتح تذكرة مغلقة")
 async def reopen_ticket(interaction: discord.Interaction):
-    if not await is_staff(interaction.user, interaction.guild_id):
+    if not await is_authorized_staff(interaction.user, interaction.guild_id):
         await interaction.response.send_message("❌ ليس لديك صلاحية لإعادة فتح التذكرة!", ephemeral=True)
         return
     
@@ -1356,7 +1368,7 @@ async def reopen_ticket(interaction: discord.Interaction):
 
 @البوت.tree.command(name="claim", description="استلام تذكرة")
 async def claim_ticket(interaction: discord.Interaction):
-    if not await is_staff(interaction.user, interaction.guild_id):
+    if not await is_authorized_staff(interaction.user, interaction.guild_id):
         await interaction.response.send_message("❌ ليس لديك صلاحية لاستلام التذكرة!", ephemeral=True)
         return
     
@@ -1374,7 +1386,7 @@ async def claim_ticket(interaction: discord.Interaction):
 
 @البوت.tree.command(name="unclaim", description="إلغاء استلام التذكرة")
 async def unclaim_ticket(interaction: discord.Interaction):
-    if not await is_staff(interaction.user, interaction.guild_id):
+    if not await is_authorized_staff(interaction.user, interaction.guild_id):
         await interaction.response.send_message("❌ ليس لديك صلاحية لإلغاء استلام التذكرة!", ephemeral=True)
         return
     
@@ -1388,7 +1400,7 @@ async def unclaim_ticket(interaction: discord.Interaction):
 
 @البوت.tree.command(name="close", description="إغلاق التذكرة الحالية")
 async def close_ticket(interaction: discord.Interaction, reason: str = None):
-    if not await is_staff(interaction.user, interaction.guild_id) and str(interaction.user.id) != (await get_ticket_info(interaction.channel.id))["creator_id"]:
+    if not await is_authorized_staff(interaction.user, interaction.guild_id) and str(interaction.user.id) != (await get_ticket_info(interaction.channel.id))["creator_id"]:
         await interaction.response.send_message("❌ ليس لديك صلاحية لإغلاق هذه التذكرة!", ephemeral=True)
         return
     
@@ -1427,7 +1439,7 @@ async def closerequest(interaction: discord.Interaction, reason: str = None):
 
 @البوت.tree.command(name="notes", description="عرض ملاحظات التذكرة")
 async def notes_ticket(interaction: discord.Interaction):
-    if not await is_staff(interaction.user, interaction.guild_id):
+    if not await is_authorized_staff(interaction.user, interaction.guild_id):
         await interaction.response.send_message("❌ ليس لديك صلاحية لعرض الملاحظات!", ephemeral=True)
         return
     
@@ -1477,11 +1489,11 @@ async def switchpanel(interaction: discord.Interaction, channel: discord.TextCha
 @البوت.tree.command(name="transfer", description="نقل التذكرة إلى موظف آخر")
 @app_commands.describe(user="الموظف المستهدف")
 async def transfer_ticket(interaction: discord.Interaction, user: discord.Member):
-    if not await is_staff(interaction.user, interaction.guild_id):
+    if not await is_authorized_staff(interaction.user, interaction.guild_id):
         await interaction.response.send_message("❌ ليس لديك صلاحية لنقل التذكرة!", ephemeral=True)
         return
     
-    if not await is_staff(user, interaction.guild_id):
+    if not await is_authorized_staff(user, interaction.guild_id):
         await interaction.response.send_message("❌ المستخدم المستهدف ليس موظفاً!", ephemeral=True)
         return
     
