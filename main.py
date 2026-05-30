@@ -11,7 +11,7 @@ import threading
 from flask import Flask
 from datetime import datetime, timedelta
 from management import Management, EmbedBuilder, EmbedEditView, HelpButtons, RolesSelect, ConfirmView
-from invitetracker import setup_invite_tracker, on_member_join, on_guild_join, get_invite_count, get_all_invites
+from invitetracker import setup_invite_tracker, get_invite_count, get_all_invites
 
 تطبيق_فلاسك = Flask(__name__)
 
@@ -83,7 +83,7 @@ async def on_ready():
     
     management = Management(البوت)
     await management.init_db()
-    await setup_invite_tracker(البوت)
+    setup_invite_tracker(البوت)
     
     تغيير_الحالة.start()
     تحديث_عدد_الأعضاء.start()
@@ -94,17 +94,6 @@ async def on_ready():
         print(f"🔄 تم مزامنة الأوامر")
     except Exception as e:
         print(f"❌ فشل المزامنة: {e}")
-
-@البوت.event
-async def on_member_join(member):
-    await on_member_join(member)
-
-@البوت.event
-async def on_guild_join(guild):
-    await on_guild_join(guild)
-    async with aiosqlite.connect("server_data.db") as db:
-        await db.execute("INSERT OR IGNORE INTO server_config (guild_id) VALUES (?)", (str(guild.id),))
-        await db.commit()
 
 @البوت.event
 async def on_message_delete(message):
@@ -164,13 +153,6 @@ async def on_message(message):
             break
     
     await البوت.process_commands(message)
-
-async def check_new_account(interaction, member):
-    account_age = (datetime.now() - member.created_at).days
-    if account_age < 5:
-        await interaction.response.send_message(f"⚠️ الحساب عمره {account_age} يوم فقط. يرجى المحاولة لاحقاً.", ephemeral=True)
-        return False
-    return True
 
 @البوت.tree.command(name="اعدادات", description="إعداد البوت في السيرفر")
 @app_commands.describe(
@@ -291,12 +273,8 @@ async def تحليل(interaction: discord.Interaction):
         await interaction.response.send_message("❌ هذا الأمر مخصص للأونر فقط!", ephemeral=True)
         return
     
-    total_messages = 0
-    active_members = 0
-    
     embed = discord.Embed(title="📈 تحليل نشاط السيرفر", color=0x9B59B6, timestamp=datetime.now())
     embed.add_field(name="👥 إجمالي الأعضاء", value=str(interaction.guild.member_count), inline=True)
-    embed.add_field(name="💬 الرسائل (تقديري)", value="جاري التحليل...", inline=True)
     embed.add_field(name="⭐ مستوى النشاط", value="🟢 مرتفع", inline=True)
     await interaction.response.send_message(embed=embed)
 
