@@ -1,31 +1,38 @@
 # ==================== main.py ====================
+import sys
+import traceback
+
+def handle_exception(exc_type, exc_value, exc_traceback):
+    sys.stderr.write("Unexpected error: ")
+    traceback.print_exception(exc_type, exc_value, exc_traceback, file=sys.stderr)
+
+sys.excepthook = handle_exception
+
 import discord
 from discord.ext import commands, tasks
 from discord import app_commands
 import aiosqlite
 import asyncio
 import os
-import sys
-import traceback
+import random
+import time
 import threading
 from flask import Flask
 from datetime import datetime, timedelta
 from collections import defaultdict
-from management import Management, EmbedBuilder, EmbedEditView, HelpButtons, RolesSelect, ConfirmView, StaffPollView, GrowthView, DeadChannelsView, PeakActivityView
-from invitetracker import setup_invite_tracker, get_invite_count, get_all_invites
 
 تطبيق_فلاسك = Flask(__name__)
 
 @تطبيق_فلاسك.route('/')
 def الصفحة_الرئيسية():
-    return "البوت شغال! الاصدار 2.3"
+    return "Bot is running! Version 2.3"
 
 def تشغيل_الخادم():
     تطبيق_فلاسك.run(host='0.0.0.0', port=8080)
 
 التوكن = os.getenv("DISCORD_TOKEN")
 if التوكن is None:
-    print("❌ التوكن غير موجود")
+    print("❌ DISCORD_TOKEN not found in environment variables")
     sys.exit(1)
 
 الصلاحيات = discord.Intents.default()
@@ -35,9 +42,10 @@ if التوكن is None:
 
 البوت = commands.Bot(command_prefix="!", intents=الصلاحيات)
 
+بيانات_الدعوات = {}
+دعوات_السيرفرات = {}
 بيانات_التحقق = {}
-الروابط_المحظورة = {}
-نشاط_الرومات = defaultdict(lambda: defaultdict(int))
+بيانات_التقارير = {}
 
 async def init_db():
     async with aiosqlite.connect("server_data.db") as db:
@@ -67,9 +75,34 @@ async def init_db():
         await db.execute('''CREATE TABLE IF NOT EXISTS member_join_log (
             guild_id TEXT,
             date TEXT,
-            count INTEGER DEFAULT 0
+            count INTEGER DEFAULT 0,
+            PRIMARY KEY (guild_id, date)
+        )''')
+        await db.execute('''CREATE TABLE IF NOT EXISTS channel_activity (
+            guild_id TEXT,
+            channel_id TEXT,
+            last_message INTEGER,
+            PRIMARY KEY (guild_id, channel_id)
         )''')
         await db.commit()
+
+async def تحديث_الدعوات(guild):
+    try:
+        دعوات_السيرفرات[guild.id] = {inv.code: inv.uses for inv in await guild.invites()}
+    except:
+        pass
+
+async def تسجيل_نشاط_القناة(guild_id, channel_id):
+    async with aiosqlite.connect("server_data.db") as db:
+        await db.execute("INSERT OR REPLACE INTO channel_activity (guild_id, channel_id, last_message) VALUES (?, ?, ?)",
+                        (str(guild_id), str(channel_id), int(time.time())))
+        await db.commit()
+
+async def الحصول_على_عدد_الدعوات(user_id):
+    return بيانات_الدعوات.get(str(user_id), 0)
+
+async def الحصول_على_جميع_الدعوات():
+    return sorted(بيانات_الدعوات.items(), key=lambda x: x[1], reverse=True)
 
 class VerifyView(discord.ui.View):
     def __init__(self, role_id):
@@ -260,7 +293,9 @@ async def before_تحديث_عدد_الأعضاء():
 async def on_ready():
     print(f"✅ Bot online as: {البوت.user} (Version 2.3)")
     await init_db()
-    setup_invite_tracker(البوت)
+    
+    for guild in البوت.guilds:
+        await تحديث_الدعوات(guild)
     
     تحديث_عدد_الأعضاء.start()
     
@@ -271,9 +306,50 @@ async def on_ready():
         print(f"❌ Sync failed: {e}")
 
 @البوت.event
+async def on_member_join(member):
+    try:
+        invites_before = دعوات_السيرفرات.get(member.guild.id, {})
+        invites_after = {inv.code: inv.uses for inv in await member.guild.invites()}
+        
+        inviter = None
+        for code, uses in invites_after.items():
+            if code in invites_before and uses > invites_before[code]:
+                inviter = code
+                break
+        
+        if inviter:
+            async with aiosqlite.connect("server_data.db") as db:
+                cursor = await db.execute("SELECT welcome_channel FROM server_config WHERE guild_id = ?", (str(member.guild.id),))
+                row = await cursor.fetchone()
+            
+            if row and row[0]:
+                channel = member.guild.get_channel(int(row[0]))
+                if channel:
+                    invite = await member.guild.fetch_invite(inviter)
+                    if invite and invite.inviter:
+                        inviter_name = invite.inviter.display_name
+                        بيانات_الدعوات[invite.inviter.id] = بيانات_الدعوات.get(invite.inviter.id, 0) + 1
+                        total_invites = بيانات_الدعوات[invite.inviter.id]
+                        
+                        embed = discord.Embed(title="🎉 New Member!", description=f"Welcome {member.mention} to the server!", color=0x00FF00, timestamp=datetime.now())
+                        embed.add_field(name="👤 Invited by", value=inviter_name, inline=True)
+                        embed.add_field(name="📊 Total Invites", value=str(total_invites), inline=True)
+                        await channel.send(embed=embed)
+        
+        دعوات_السيرفرات[member.guild.id] = {inv.code: inv.uses for inv in await member.guild.invites()}
+    except Exception as e:
+        print(f"Welcome error: {e}")
+
+@البوت.event
+async def on_guild_join(guild):
+    await تحديث_الدعوات(guild)
+
+@البوت.event
 async def on_message(message):
     if message.author.bot:
         return
+    
+    await تسجيل_نشاط_القناة(message.guild.id, message.channel.id)
     
     async with aiosqlite.connect("server_data.db") as db:
         cursor = await db.execute("SELECT block_links FROM server_config WHERE guild_id = ?", (str(message.guild.id),))
@@ -478,15 +554,15 @@ async def dead_channels(interaction: discord.Interaction):
             await interaction.response.send_message("❌ This command is for admins only!", ephemeral=True)
             return
         
+        seven_days_ago = int(time.time()) - (7 * 24 * 3600)
         inactive_channels = []
-        for channel in interaction.guild.text_channels:
-            try:
-                async for msg in channel.history(limit=1, after=datetime.now() - timedelta(days=7)):
-                    break
-                else:
+        
+        async with aiosqlite.connect("server_data.db") as db:
+            for channel in interaction.guild.text_channels:
+                cursor = await db.execute("SELECT last_message FROM channel_activity WHERE guild_id = ? AND channel_id = ?", (str(interaction.guild_id), str(channel.id)))
+                row = await cursor.fetchone()
+                if not row or row[0] < seven_days_ago:
                     inactive_channels.append(channel.mention)
-            except:
-                pass
         
         embed = discord.Embed(title="💀 Dead Channels", description="Channels with no activity for 7 days", color=0xFF0000)
         if inactive_channels:
@@ -534,7 +610,7 @@ async def rate_staff(interaction: discord.Interaction):
 @البوت.tree.command(name="invites", description="Show how many invites you have")
 async def invites(interaction: discord.Interaction):
     try:
-        count = get_invite_count(interaction.user.id)
+        count = await الحصول_على_عدد_الدعوات(interaction.user.id)
         embed = discord.Embed(title=f"📊 Invites for {interaction.user.display_name}", color=0x00FF00)
         embed.add_field(name="🎫 Total Invites", value=str(count), inline=True)
         await interaction.response.send_message(embed=embed)
@@ -546,7 +622,8 @@ async def invites(interaction: discord.Interaction):
 @البوت.tree.command(name="invite_leaderboard", description="Top 10 invite leaders")
 async def invite_leaderboard(interaction: discord.Interaction):
     try:
-        sorted_invites = get_all_invites()[:10]
+        sorted_invites = await الحصول_على_جميع_الدعوات()
+        sorted_invites = sorted_invites[:10]
         if not sorted_invites:
             await interaction.response.send_message("No invites recorded yet", ephemeral=True)
             return
