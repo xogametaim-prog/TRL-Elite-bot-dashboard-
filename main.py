@@ -26,7 +26,7 @@ from collections import defaultdict
 
 @تطبيق_فلاسك.route('/')
 def الصفحة_الرئيسية():
-    return "البوت شغال! الإصدار 2.6"
+    return "البوت شغال! الإصدار 2.7"
 
 def تشغيل_الخادم():
     تطبيق_فلاسك.run(host='0.0.0.0', port=8080)
@@ -129,6 +129,12 @@ async def الحصول_على_أعضاء_الرتبة(guild, role):
             members.append(member)
     return members
 
+class GamePlayer:
+    def __init__(self, user_id, user_name):
+        self.user_id = user_id
+        self.user_name = user_name
+        self.is_alive = True
+
 class RouletteGame:
     def __init__(self, bot):
         self.bot = bot
@@ -153,97 +159,322 @@ class RouletteGame:
                 await send_func("❌ هناك لعبة روليت نشطة بالفعل في هذا السيرفر!")
             return
         
+        game = RouletteGameSession(self.bot, guild_id, author.id)
+        لعب_الروليت[guild_id] = game
+        
+        if is_interaction:
+            await send_func(embed=game.get_waiting_embed(), view=game)
+            message = await interaction_or_ctx.original_response()
+        else:
+            message = await send_func(embed=game.get_waiting_embed(), view=game)
+        
+        game.message = message
+        await game.start_countdown()
+
+class RouletteGameSession(discord.ui.View):
+    def __init__(self, bot, guild_id, host_id):
+        super().__init__(timeout=15)
+        self.bot = bot
+        self.guild_id = guild_id
+        self.host_id = host_id
+        self.players = []
+        self.current_turn_index = 0
+        self.message = None
+        self.game_active = True
+        self.waiting_for_action = False
+    
+    def get_waiting_embed(self):
+        players_list = "\n".join([f"{i+1}. <@{p.user_id}>" for i, p in enumerate(self.players)]) if self.players else "لا يوجد مشتركين بعد"
         embed = discord.Embed(
             title="🎡 روليت السيرفر",
-            description="**انضم الآن لتجربة حظك!**\nسيتم اختيار شخص واحد ليواجه المصير المحتوم.\n\n**المشتركين (0):**\nلا يوجد مشتركين بعد",
+            description=f"**انضم الآن لتجربة حظك!**\nسيتم اختيار شخص واحد ليواجه المصير المحتوم.\n\n**المشتركين ({len(self.players)}):**\n{players_list}",
             color=0xFF6600
         )
         embed.set_image(url=صورة_الروليت_الانتظار)
-        embed.add_field(name="⏰ المدة المتبقية", value="30 ثانية", inline=True)
-        embed.set_footer(text=f"بواسطة {author.display_name}")
-        
-        view = RouletteView(author.id, self.bot)
-        
-        if is_interaction:
-            await send_func(embed=embed, view=view)
-            message = await interaction_or_ctx.original_response()
-        else:
-            message = await send_func(embed=embed, view=view)
-        
-        view.message = message
-        لعب_الروليت[guild_id] = view
-        
-        await asyncio.sleep(30)
-        if guild_id in لعب_الروليت:
-            await view.on_timeout()
-            del لعب_الروليت[guild_id]
-
-class RouletteView(discord.ui.View):
-    def __init__(self, host_id, bot):
-        super().__init__(timeout=30)
-        self.host_id = host_id
-        self.bot = bot
-        self.players = []
-        self.message = None
+        embed.add_field(name="⏰ الوقت المتبقي", value="15 ثانية", inline=True)
+        embed.set_footer(text=f"بواسطة {self.bot.get_user(self.host_id).display_name if self.bot.get_user(self.host_id) else 'المشرف'}")
+        return embed
     
-    @discord.ui.button(label="🎲 دخول", style=discord.ButtonStyle.success, emoji="🎲")
+    def get_turn_embed(self):
+        current_player = self.players[self.current_turn_index]
+        players_list = "\n".join([f"{i+1}. <@{p.user_id}> {'❤️' if p.is_alive else '💀'}" for i, p in enumerate(self.players)])
+        embed = discord.Embed(
+            title="🎡 روليت السيرفر - دورك الآن!",
+            description=f"**دور اللاعب {current_player.user_name}**\n\nاضغط على زر الطرد لاختيار ضحية!\n\n**اللاعبين:**\n{players_list}",
+            color=0xFF6600
+        )
+        embed.set_image(url=صورة_الروليت_الانتظار)
+        embed.add_field(name="⏰ الوقت المتبقي", value="15 ثانية", inline=True)
+        embed.set_footer(text=f"بواسطة {current_player.user_name}")
+        return embed
+    
+    def get_result_embed(self, kicked_player, kicked_by=None):
+        players_list = "\n".join([f"{i+1}. <@{p.user_id}> {'❤️' if p.is_alive else '💀'}" for i, p in enumerate(self.players)])
+        
+        if kicked_by:
+            description = f"**{kicked_by.user_name} قام بطرد {kicked_player.user_name}!**\n\n{len([p for p in self.players if p.is_alive])} لاعب متبقي."
+        else:
+            description = f"**{kicked_player.user_name} تم طرده تلقائياً لعدم الرد في الوقت المحدد!**\n\n{len([p for p in self.players if p.is_alive])} لاعب متبقي."
+        
+        embed = discord.Embed(
+            title="🎡 نتيجة الروليت",
+            description=description,
+            color=0xFF0000
+        )
+        embed.set_image(url=صورة_الروليت_النتيجة)
+        embed.add_field(name="👥 اللاعبين المتبقيين", value=players_list, inline=False)
+        return embed
+    
+    def get_final_embed(self, winner):
+        embed = discord.Embed(
+            title="🎡 انتهت اللعبة!",
+            description=f"**الفائز هو {winner.user_name}!**\nتهانينا!",
+            color=0x00FF00
+        )
+        embed.set_image(url=صورة_الروليت_النتيجة)
+        return embed
+    
+    @discord.ui.button(label="🎲 انضم", style=discord.ButtonStyle.success, emoji="🎲")
     async def join_button(self, interaction: discord.Interaction, button: discord.ui.Button):
-        if interaction.user.id in self.players:
+        if not self.game_active:
+            await interaction.response.send_message("❌ اللعبة انتهت!", ephemeral=True)
+            return
+        
+        if any(p.user_id == interaction.user.id for p in self.players):
             await interaction.response.send_message("❌ أنت مشترك بالفعل!", ephemeral=True)
             return
-        self.players.append(interaction.user.id)
+        
+        self.players.append(GamePlayer(interaction.user.id, interaction.user.display_name))
         await interaction.response.send_message(f"✅ {interaction.user.mention} انضم إلى الروليت!", ephemeral=True)
-        await self.update_message()
+        
+        if self.message:
+            await self.message.edit(embed=self.get_waiting_embed(), view=self)
     
-    @discord.ui.button(label="🚪 خروج", style=discord.ButtonStyle.danger, emoji="🚪")
+    @discord.ui.button(label="🚪 غادر", style=discord.ButtonStyle.danger, emoji="🚪")
     async def leave_button(self, interaction: discord.Interaction, button: discord.ui.Button):
-        if interaction.user.id not in self.players:
+        if not self.game_active:
+            await interaction.response.send_message("❌ اللعبة انتهت!", ephemeral=True)
+            return
+        
+        player = next((p for p in self.players if p.user_id == interaction.user.id), None)
+        if not player:
             await interaction.response.send_message("❌ لست مشتركاً في هذه اللعبة!", ephemeral=True)
             return
-        self.players.remove(interaction.user.id)
+        
+        self.players.remove(player)
         await interaction.response.send_message(f"✅ {interaction.user.mention} غادر الروليت!", ephemeral=True)
-        await self.update_message()
-    
-    async def update_message(self):
+        
         if self.message:
-            players_list = "\n".join([f"<@{pid}>" for pid in self.players]) if self.players else "لا يوجد مشتركين بعد"
-            embed = discord.Embed(
-                title="🎡 روليت السيرفر",
-                description=f"**انضم الآن لتجربة حظك!**\nسيتم اختيار شخص واحد ليواجه المصير المحتوم.\n\n**المشتركين ({len(self.players)}):**\n{players_list}",
-                color=0xFF6600
-            )
-            embed.set_image(url=صورة_الروليت_الانتظار)
-            embed.add_field(name="⏰ المدة المتبقية", value="30 ثانية", inline=True)
-            embed.set_footer(text=f"بواسطة {self.bot.get_user(self.host_id).display_name if self.bot.get_user(self.host_id) else 'المشرف'}")
-            await self.message.edit(embed=embed)
+            await self.message.edit(embed=self.get_waiting_embed(), view=self)
     
-    async def on_timeout(self):
-        if self.message and len(self.players) > 0:
-            winner_id = random.choice(self.players)
-            winner = self.bot.get_user(winner_id)
+    async def start_countdown(self):
+        await asyncio.sleep(15)
+        
+        if not self.game_active:
+            return
+        
+        if len(self.players) < 2:
+            if self.message:
+                embed = discord.Embed(
+                    title="🎡 روليت السيرفر",
+                    description="انتهت اللعبة لعدم وجود مشتركين كافيين (يجب أن يكون هناك لاعبين على الأقل)!",
+                    color=0xFFAA00
+                )
+                embed.set_image(url=صورة_الروليت_الانتظار)
+                await self.message.edit(embed=embed, view=None)
             
-            await حفظ_سجل_الروليت(self.message.guild.id, winner_id, winner.display_name if winner else "مجهول", "تم الطرد")
+            if self.guild_id in لعب_الروليت:
+                del لعب_الروليت[self.guild_id]
+            return
+        
+        self.game_active = True
+        await self.start_turn()
+    
+    async def start_turn(self):
+        if not self.game_active:
+            return
+        
+        alive_players = [p for p in self.players if p.is_alive]
+        
+        if len(alive_players) <= 1:
+            winner = alive_players[0] if alive_players else None
+            if winner:
+                await حفظ_سجل_الروليت(self.guild_id, winner.user_id, winner.user_name, "فائز")
+                if self.message:
+                    await self.message.edit(embed=self.get_final_embed(winner), view=None)
+            else:
+                if self.message:
+                    embed = discord.Embed(
+                        title="🎡 روليت السيرفر",
+                        description="انتهت اللعبة!",
+                        color=0xFFAA00
+                    )
+                    embed.set_image(url=صورة_الروليت_النتيجة)
+                    await self.message.edit(embed=embed, view=None)
             
-            embed = discord.Embed(
-                title="🎡 نتيجة الروليت",
-                description=f"**تم اختيار {winner.mention} ليواجه المصير المحتوم!**\n\nتم طرد {winner.mention} من اللعبة.",
-                color=0xFF0000
-            )
-            embed.set_image(url=صورة_الروليت_النتيجة)
-            await self.message.edit(embed=embed, view=None)
+            if self.guild_id in لعب_الروليت:
+                del لعب_الروليت[self.guild_id]
+            return
+        
+        if self.current_turn_index >= len(self.players):
+            self.current_turn_index = 0
+        
+        while not self.players[self.current_turn_index].is_alive:
+            self.current_turn_index = (self.current_turn_index + 1) % len(self.players)
+        
+        current_player = self.players[self.current_turn_index]
+        
+        if self.message:
+            await self.message.edit(embed=self.get_turn_embed(), view=self)
+        
+        self.waiting_for_action = True
+        self.timeout = 15
+        
+        await asyncio.sleep(15)
+        
+        if self.waiting_for_action and self.game_active:
+            await self.auto_kick()
+    
+    async def kick_player(self, interaction, target_player, kicker_player=None):
+        if not self.game_active:
+            await interaction.response.send_message("❌ اللعبة انتهت!", ephemeral=True)
+            return
+        
+        if self.waiting_for_action == False:
+            await interaction.response.send_message("❌ ليس دورك الآن!", ephemeral=True)
+            return
+        
+        current_player = self.players[self.current_turn_index]
+        
+        if kicker_player:
+            if interaction.user.id != kicker_player.user_id:
+                await interaction.response.send_message("❌ ليس دورك!", ephemeral=True)
+                return
+        else:
+            if interaction.user.id != current_player.user_id:
+                await interaction.response.send_message("❌ ليس دورك!", ephemeral=True)
+                return
+        
+        if not target_player.is_alive:
+            await interaction.response.send_message("❌ هذا اللاعب تم طرده بالفعل!", ephemeral=True)
+            return
+        
+        target_player.is_alive = False
+        self.waiting_for_action = False
+        
+        await حفظ_سجل_الروليت(self.guild_id, target_player.user_id, target_player.user_name, "تم الطرد")
+        
+        kicker_name = kicker_player.user_name if kicker_player else current_player.user_name
+        
+        if self.message:
+            await self.message.edit(embed=self.get_result_embed(target_player, kicker_player or current_player), view=None)
+        
+        await interaction.response.send_message(f"✅ {interaction.user.mention} قام بطرد {target_player.user_name}!", ephemeral=True)
+        
+        await asyncio.sleep(3)
+        
+        self.current_turn_index = (self.current_turn_index + 1) % len(self.players)
+        await self.start_turn()
+    
+    async def auto_kick(self):
+        if not self.game_active:
+            return
+        
+        if not self.waiting_for_action:
+            return
+        
+        current_player = self.players[self.current_turn_index]
+        
+        if current_player.is_alive:
+            current_player.is_alive = False
+            await حفظ_سجل_الروليت(self.guild_id, current_player.user_id, current_player.user_name, "تم الطرد تلقائياً")
             
-            try:
-                await winner.send(f"⚠️ لقد تم اختيارك في روليت السيرفر `{self.message.guild.name}`! حظاً أوفر في المرة القادمة.")
-            except:
-                pass
-        elif self.message:
-            embed = discord.Embed(
-                title="🎡 روليت السيرفر",
-                description="انتهت اللعبة لعدم وجود مشتركين كافيين!",
-                color=0xFFAA00
-            )
-            embed.set_image(url=صورة_الروليت_الانتظار)
-            await self.message.edit(embed=embed, view=None)
+            if self.message:
+                await self.message.edit(embed=self.get_result_embed(current_player, None), view=None)
+            
+            await asyncio.sleep(3)
+        
+        self.waiting_for_action = False
+        self.current_turn_index = (self.current_turn_index + 1) % len(self.players)
+        await self.start_turn()
+    
+    @discord.ui.button(label="🔫 طرد عشوائي", style=discord.ButtonStyle.danger, emoji="🔫")
+    async def random_kick_button(self, interaction: discord.Interaction, button: discord.ui.Button):
+        if not self.game_active:
+            await interaction.response.send_message("❌ اللعبة انتهت!", ephemeral=True)
+            return
+        
+        if not self.waiting_for_action:
+            await interaction.response.send_message("❌ ليس دورك الآن!", ephemeral=True)
+            return
+        
+        current_player = self.players[self.current_turn_index]
+        
+        if interaction.user.id != current_player.user_id:
+            await interaction.response.send_message("❌ ليس دورك!", ephemeral=True)
+            return
+        
+        alive_players = [p for p in self.players if p.is_alive and p.user_id != current_player.user_id]
+        
+        if not alive_players:
+            await interaction.response.send_message("❌ لا يوجد لاعبين آخرين للطرد!", ephemeral=True)
+            return
+        
+        target = random.choice(alive_players)
+        await self.kick_player(interaction, target, current_player)
+    
+    @discord.ui.button(label="🎲 طرد لاعب", style=discord.ButtonStyle.primary, emoji="🎲")
+    async def kick_button(self, interaction: discord.Interaction, button: discord.ui.Button):
+        if not self.game_active:
+            await interaction.response.send_message("❌ اللعبة انتهت!", ephemeral=True)
+            return
+        
+        if not self.waiting_for_action:
+            await interaction.response.send_message("❌ ليس دورك الآن!", ephemeral=True)
+            return
+        
+        current_player = self.players[self.current_turn_index]
+        
+        if interaction.user.id != current_player.user_id:
+            await interaction.response.send_message("❌ ليس دورك!", ephemeral=True)
+            return
+        
+        alive_players = [p for p in self.players if p.is_alive and p.user_id != current_player.user_id]
+        
+        if not alive_players:
+            await interaction.response.send_message("❌ لا يوجد لاعبين آخرين للطرد!", ephemeral=True)
+            return
+        
+        view = PlayerSelectView(self, current_player, alive_players)
+        embed = discord.Embed(
+            title="🎲 اختر لاعباً لطرده",
+            description="اختر اللاعب الذي تريد طرده من القائمة أدناه",
+            color=0xFF6600
+        )
+        await interaction.response.send_message(embed=embed, view=view, ephemeral=True)
+
+class PlayerSelectView(discord.ui.View):
+    def __init__(self, game, current_player, players):
+        super().__init__(timeout=30)
+        self.game = game
+        self.current_player = current_player
+        self.players = players
+        
+        select = discord.ui.Select(
+            placeholder="اختر لاعباً لطرده...",
+            options=[discord.SelectOption(label=p.user_name, value=str(p.user_id)) for p in players[:25]]
+        )
+        select.callback = self.select_callback
+        self.add_item(select)
+    
+    async def select_callback(self, interaction: discord.Interaction):
+        target_id = int(interaction.data["values"][0])
+        target = next((p for p in self.players if p.user_id == target_id), None)
+        
+        if target:
+            await self.game.kick_player(interaction, target, self.current_player)
+        else:
+            await interaction.response.send_message("❌ حدث خطأ في اختيار اللاعب!", ephemeral=True)
 
 class VerifyView(discord.ui.View):
     def __init__(self, role_id):
@@ -478,7 +709,7 @@ async def before_تحديث_عدد_الأعضاء():
 
 @البوت.event
 async def on_ready():
-    print(f"✅ البوت دخل باسم: {البوت.user} (الإصدار 2.6)")
+    print(f"✅ البوت دخل باسم: {البوت.user} (الإصدار 2.7)")
     await init_db()
     
     for guild in البوت.guilds:
@@ -921,17 +1152,17 @@ async def ترتيب_الدعوات(interaction: discord.Interaction):
 
 @البوت.tree.command(name="مساعدة", description="عرض جميع الأوامر")
 async def مساعدة(interaction: discord.Interaction):
-    embed = discord.Embed(title="🤖 قائمة أوامر البوت - الإصدار 2.6", color=0x5865F2)
+    embed = discord.Embed(title="🤖 قائمة أوامر البوت - الإصدار 2.7", color=0x5865F2)
     embed.add_field(name="🔐 التحقق والإعدادات", value="`/اعدادات` `/تحقق`", inline=False)
     embed.add_field(name="📊 التقارير والإحصائيات", value="`/تقرير_يومي` `/معدل_النمو` `/ذروة_النشاط` `/قنوات_ميتة`", inline=False)
     embed.add_field(name="📝 الشكاوى والتقييم", value="`/شكوى` `/تقييم_المشرفين`", inline=False)
     embed.add_field(name="🛡️ الحماية", value="`/حظر_الروابط`", inline=False)
     embed.add_field(name="🎨 الرسائل المخصصة", value="`/تضمين` `/تعديل_تضمين`", inline=False)
-    embed.add_field(name="🎲 الألعاب (للأونر فقط)", value="`/روليت` `/سجل_الروليت`", inline=False)
+    embed.add_field(name="🎲 ألعاب الروليت (للأونر فقط)", value="`/روليت` `/سجل_الروليت`", inline=False)
     embed.add_field(name="👥 إدارة الأعضاء", value="`/أعضاء_الرتبة`", inline=False)
     embed.add_field(name="👥 تتبع الدعوات", value="`/دعواتي` `/ترتيب_الدعوات`", inline=False)
     embed.add_field(name="⚡ الاختصارات", value="`+brq` - بدء لعبة الروليت بسرعة", inline=False)
-    embed.set_footer(text="تم التطوير بواسطة taim | الإصدار 2.6")
+    embed.set_footer(text="تم التطوير بواسطة taim | الإصدار 2.7")
     await interaction.response.send_message(embed=embed)
 
 if __name__ == "__main__":
