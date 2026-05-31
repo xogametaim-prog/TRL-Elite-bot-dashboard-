@@ -7,6 +7,62 @@ import asyncio
 import time
 from datetime import datetime, timedelta
 
+async def create_embed(interaction_or_channel, title=None, description=None, color=None, image_url=None, fields=None, footer_text=None, is_ephemeral=False, view=None):
+    try:
+        if color is None:
+            color = 0x3498db
+        if isinstance(color, str):
+            color = int(color.replace("#", ""), 16)
+        
+        embed = discord.Embed(
+            title=title,
+            description=description,
+            color=color
+        )
+        
+        if image_url:
+            embed.set_image(url=image_url)
+        
+        if fields:
+            for field in fields:
+                embed.add_field(
+                    name=field.get("name", ""),
+                    value=field.get("value", ""),
+                    inline=field.get("inline", True)
+                )
+        
+        if footer_text:
+            embed.set_footer(text=footer_text)
+        
+        embed.timestamp = datetime.utcnow()
+        
+        if hasattr(interaction_or_channel, 'response'):
+            if interaction_or_channel.response.is_done():
+                await interaction_or_channel.followup.send(embed=embed, ephemeral=is_ephemeral, view=view)
+            else:
+                await interaction_or_channel.response.send_message(embed=embed, ephemeral=is_ephemeral, view=view)
+        else:
+            await interaction_or_channel.send(embed=embed, view=view)
+        
+        return embed
+    except Exception as e:
+        print(f"❌ خطأ في دالة create_embed: {e}")
+        try:
+            fallback_embed = discord.Embed(
+                description="حدث خطأ أثناء إنشاء الرسالة. يرجى إبلاغ الإدارة.",
+                color=0xFF0000
+            )
+            if hasattr(interaction_or_channel, 'response'):
+                if interaction_or_channel.response.is_done():
+                    await interaction_or_channel.followup.send(embed=fallback_embed, ephemeral=True)
+                else:
+                    await interaction_or_channel.response.send_message(embed=fallback_embed, ephemeral=True)
+            else:
+                await interaction_or_channel.send(embed=fallback_embed)
+        except:
+            print("❌ فشل إرسال رسالة الخطأ الاحتياطية")
+        return None
+
 class Management:
     def __init__(self, bot):
         self.bot = bot
