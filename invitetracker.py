@@ -13,6 +13,62 @@ async def تحديث_الدعوات(guild):
     except:
         pass
 
+async def create_embed(interaction_or_channel, title=None, description=None, color=None, image_url=None, fields=None, footer_text=None, is_ephemeral=False, view=None):
+    try:
+        if color is None:
+            color = 0x3498db
+        if isinstance(color, str):
+            color = int(color.replace("#", ""), 16)
+        
+        embed = discord.Embed(
+            title=title,
+            description=description,
+            color=color
+        )
+        
+        if image_url:
+            embed.set_image(url=image_url)
+        
+        if fields:
+            for field in fields:
+                embed.add_field(
+                    name=field.get("name", ""),
+                    value=field.get("value", ""),
+                    inline=field.get("inline", True)
+                )
+        
+        if footer_text:
+            embed.set_footer(text=footer_text)
+        
+        embed.timestamp = datetime.utcnow()
+        
+        if hasattr(interaction_or_channel, 'response'):
+            if interaction_or_channel.response.is_done():
+                await interaction_or_channel.followup.send(embed=embed, ephemeral=is_ephemeral, view=view)
+            else:
+                await interaction_or_channel.response.send_message(embed=embed, ephemeral=is_ephemeral, view=view)
+        else:
+            await interaction_or_channel.send(embed=embed, view=view)
+        
+        return embed
+    except Exception as e:
+        print(f"❌ خطأ في دالة create_embed: {e}")
+        try:
+            fallback_embed = discord.Embed(
+                description="حدث خطأ أثناء إنشاء الرسالة. يرجى إبلاغ الإدارة.",
+                color=0xFF0000
+            )
+            if hasattr(interaction_or_channel, 'response'):
+                if interaction_or_channel.response.is_done():
+                    await interaction_or_channel.followup.send(embed=fallback_embed, ephemeral=True)
+                else:
+                    await interaction_or_channel.response.send_message(embed=fallback_embed, ephemeral=True)
+            else:
+                await interaction_or_channel.send(embed=fallback_embed)
+        except:
+            print("❌ فشل إرسال رسالة الخطأ الاحتياطية")
+        return None
+
 def setup_invite_tracker(bot):
     @bot.event
     async def on_member_join(member):
@@ -40,19 +96,20 @@ def setup_invite_tracker(bot):
                             بيانات_الدعوات[invite.inviter.id] = بيانات_الدعوات.get(invite.inviter.id, 0) + 1
                             total_invites = بيانات_الدعوات[invite.inviter.id]
                             
-                            embed = discord.Embed(
-                                title="🎉 New Member!",
-                                description=f"Welcome {member.mention} to the server!",
+                            await create_embed(
+                                channel,
+                                title="🎉 عضو جديد!",
+                                description=f"مرحباً {member.mention} في السيرفر!",
                                 color=0x00FF00,
-                                timestamp=datetime.now()
+                                fields=[
+                                    {"name": "👤 الداعي", "value": inviter_name, "inline": True},
+                                    {"name": "📊 إجمالي الدعوات", "value": str(total_invites), "inline": True}
+                                ]
                             )
-                            embed.add_field(name="👤 Invited by", value=inviter_name, inline=True)
-                            embed.add_field(name="📊 Total Invites", value=str(total_invites), inline=True)
-                            await channel.send(embed=embed)
             
             دعوات_السيرفرات[member.guild.id] = {inv.code: inv.uses for inv in await member.guild.invites()}
         except Exception as e:
-            print(f"Welcome error: {e}")
+            print(f"خطأ في الترحيب: {e}")
     
     @bot.event
     async def on_guild_join(guild):
