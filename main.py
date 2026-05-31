@@ -51,7 +51,6 @@ if التوكن is None:
 صورة_الروليت_الانتظار = "https://cdn.discordapp.com/attachments/1507384858652184737/1510379857845031105/1780172460649.png"
 صورة_الروليت_النتيجة = "https://cdn.discordapp.com/attachments/1507384858652184737/1510379865059233923/1780172455105.png"
 
-# ========== الدالة الموحدة للـ Embed ==========
 async def create_embed(interaction_or_channel, title=None, description=None, color=None, image_url=None, fields=None, footer_text=None, is_ephemeral=False, view=None):
     try:
         if color is None:
@@ -222,12 +221,10 @@ class RouletteGame:
         if is_slash:
             guild_id = interaction_or_ctx.guild_id
             author = interaction_or_ctx.user
-            send_func = interaction_or_ctx.response.send_message
             is_interaction = True
         else:
             guild_id = interaction_or_ctx.guild.id
             author = interaction_or_ctx.author
-            send_func = interaction_or_ctx.channel.send
             is_interaction = False
         
         if guild_id in لعب_الروليت:
@@ -591,7 +588,6 @@ class VerifyView(discord.ui.View):
         except Exception as e:
             await create_embed(interaction, description=f"❌ حدث خطأ: {str(e)}", color=0xFF0000, is_ephemeral=True)
 
-# ========== نظام الألعاب (Games Cog) ==========
 class Games(commands.Cog):
     def __init__(self, bot):
         self.bot = bot
@@ -720,7 +716,6 @@ class Games(commands.Cog):
                     is_correct = True
             
             elif game_type == "categories":
-                category = game.get("category", "")
                 if message.content.strip():
                     is_correct = True
             
@@ -1004,7 +999,6 @@ class GameSelectionView(discord.ui.View):
         await self.games_cog.start_game_session(interaction, game_names[game_type], game_type)
         await self.games_cog.prepare_game_challenge(interaction.guild_id, game_type, interaction.channel)
 
-# ========== نظام المساعدة ==========
 class HelpView(discord.ui.View):
     def __init__(self):
         super().__init__(timeout=60)
@@ -1050,7 +1044,6 @@ async def help_command(ctx):
     embed.set_footer(text="استخدم /game لبدء الألعاب")
     await ctx.send(embed=embed, view=view)
 
-# ========== أحداث البوت ==========
 @bot.event
 async def on_ready():
     print(f"✅ تم تشغيل البوت: {bot.user}")
@@ -1132,11 +1125,6 @@ async def on_message(message):
     
     await bot.process_commands(message)
 
-@bot.event
-async def on_interaction(interaction):
-    pass
-
-# ========== أوامر البوت ==========
 @bot.command(name="روليت")
 async def roulette_command(ctx):
     roulette_game = RouletteGame(bot)
@@ -1255,7 +1243,6 @@ async def leaderboard_command(interaction: discord.Interaction):
         is_ephemeral=True
     )
 
-# ========== تشغيل البوت ==========
 if __name__ == "__main__":
     threading.Thread(target=تشغيل_الخادم, daemon=True).start()
     asyncio.run(init_db())
