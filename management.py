@@ -84,6 +84,7 @@ class Management(commands.Cog):
     # ========== قاعدة البيانات ==========
     async def init_db(self):
         async with aiosqlite.connect("server_data.db") as db:
+            # إنشاء جميع الجداول المطلوبة
             await db.execute('''CREATE TABLE IF NOT EXISTS guild_settings (
                 guild_id TEXT PRIMARY KEY,
                 welcome_channel_id TEXT
@@ -114,7 +115,7 @@ class Management(commands.Cog):
                 is_active BOOLEAN DEFAULT 1
             )''')
             await db.commit()
-        logger.info("✅ تم تهيئة قاعدة البيانات")
+        logger.info("✅ تم تهيئة قاعدة البيانات (تم إنشاء جميع الجداول)")
 
     @commands.Cog.listener()
     async def on_ready(self):
