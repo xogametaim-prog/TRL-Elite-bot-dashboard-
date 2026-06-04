@@ -122,7 +122,6 @@ async def on_ready():
 
 async def main():
     try:
-        # تشغيل السيرفر الوهمي في Thread منفصل
         threading.Thread(target=تشغيل_السيرفر_الوهمي, daemon=True).start()
         logger.info("🌐 تم تشغيل السيرفر الوهمي")
         
