@@ -4,7 +4,10 @@ import os
 import logging
 import traceback
 import asyncio
+import threading
+from flask import Flask
 
+# ==================== إعداد السجل ====================
 logging.basicConfig(
     level=logging.INFO,
     format='%(asctime)s - %(name)s - %(levelname)s - %(message)s'
@@ -17,6 +20,18 @@ def handle_exception(exc_type, exc_value, exc_traceback):
 
 sys.excepthook = handle_exception
 
+# ==================== سيرفر وهمي لـ Render ====================
+تطبيق_فلاسك = Flask(__name__)
+
+@تطبيق_فلاسك.route('/')
+def الصفحة_الرئيسية():
+    return "✅ البوت شغال!"
+
+def تشغيل_السيرفر_الوهمي():
+    المنفذ = int(os.getenv("PORT", 8080))
+    تطبيق_فلاسك.run(host='0.0.0.0', port=المنفذ)
+
+# ==================== استيراد discord.py ====================
 try:
     import discord
     from discord.ext import commands
@@ -25,6 +40,7 @@ except Exception as e:
     logger.error(f"❌ فشل في استيراد discord.py: {e}")
     sys.exit(1)
 
+# ==================== التوكن ====================
 التوكن = os.getenv("DISCORD_TOKEN")
 if not التوكن:
     logger.error("❌ DISCORD_TOKEN غير موجود في متغيرات البيئة")
@@ -32,6 +48,7 @@ if not التوكن:
 
 logger.info(f"✅ تم العثور على التوكن (يبدأ بـ: {التوكن[:10]}...)")
 
+# ==================== إنشاء البوت ====================
 try:
     الصلاحيات = discord.Intents.default()
     الصلاحيات.message_content = True
@@ -105,6 +122,10 @@ async def on_ready():
 
 async def main():
     try:
+        # تشغيل السيرفر الوهمي في Thread منفصل
+        threading.Thread(target=تشغيل_السيرفر_الوهمي, daemon=True).start()
+        logger.info("🌐 تم تشغيل السيرفر الوهمي")
+        
         logger.info("🚀 بدء تشغيل البوت...")
         await البوت.start(التوكن)
     except discord.LoginFailure:
