@@ -1,11 +1,11 @@
+// ==================== main.js ====================
 const { Client, GatewayIntentBits, SlashCommandBuilder, Routes, REST } = require('discord.js');
 const express = require('express');
-const { getAIResponseWithMemory } = require('./gemini.js'); // استدعاء الملف الجديد
+const { getAIResponseWithMemory } = require('./gemini.js');
 
-// تشغيل سيرفر الويب المساعد عشان موقع Render يظل شغال 24 ساعة
 const app = express();
-app.get('/', (req, res) => res.send('Gangster Bot Ready with Gemini 1.5-Flash!'));
-app.listen(process.env.PORT || 3000, () => console.log('سيرفر الويب المساعد يعمل بنجاح.'));
+app.get('/', (req, res) => res.send('Gangster Bot Ready with Smart RAM Memory!'));
+app.listen(process.env.PORT || 3000, () => console.log('سيرفر الويب يعمل بنجاح.'));
 
 const client = new Client({
     intents: [
@@ -16,7 +16,6 @@ const client = new Client({
     ]
 });
 
-// تعريف الأوامر (Giveaway & Guess Game)
 const commands = [
     new SlashCommandBuilder()
         .setName('giveaway')
@@ -43,7 +42,6 @@ client.once('ready', async () => {
     }
 });
 
-// نظام الرد بالذكاء الاصطناعي الذكي (عند المنشن أو في روم ai-chat)
 client.on('messageCreate', async (message) => {
     if (message.author.bot) return;
 
@@ -51,13 +49,11 @@ client.on('messageCreate', async (message) => {
     const isAiChannel = message.channel.name === 'ai-chat';
 
     if (isMentioned || isAiChannel) {
-        await message.channel.sendTyping(); // إظهار حركة "البوت يكتب..." الحماسية
+        await message.channel.sendTyping();
         
-        // تنظيف الرسالة من منشن البوت عشان يفهمها الذكاء الاصطناعي بشكل صحيح
         const cleanMessage = message.content.replace(`<@${client.user.id}>`, '').trim();
         if (!cleanMessage) return message.reply("نعم يا غالي؟ اسألني أي شيء!");
 
-        // جلب الرد من ملف جيميناي المطور بناءً على الـ ID الخاص بالعضو لمنع التداخل والخراب
         const responseText = await getAIResponseWithMemory(message.author.id, cleanMessage);
 
         if (responseText.length > 2000) {
@@ -68,11 +64,9 @@ client.on('messageCreate', async (message) => {
     }
 });
 
-// تشغيل أوامر السلاش (Giveaway & Guess Game)
 client.on('interactionCreate', async (interaction) => {
     if (!interaction.isChatInputCommand()) return;
 
-    // كود القيف أوي المصلّح لمنع مشاكل الكاش
     if (interaction.commandName === 'giveaway') {
         const prize = interaction.options.getString('prize');
         const duration = interaction.options.getInteger('duration');
@@ -99,7 +93,7 @@ client.on('interactionCreate', async (interaction) => {
                 const users = await reaction.users.fetch();
                 const candidates = users.filter(u => !u.bot).map(u => u.id);
 
-                if (candidates.length === 0) return interaction.channel.send(lang === 'ar' ? '❌ لم يشارك أحد.' : '❌ No one entered.');
+                if (candidates.length === 0) return interaction.channel.send(lang === 'ar' ? '❌ لم يشارك أحد في السحب.' : '❌ No one entered.');
 
                 const winnerId = candidates[Math.floor(Math.random() * candidates.length)];
                 
@@ -114,7 +108,6 @@ client.on('interactionCreate', async (interaction) => {
         }, duration * 1000);
     }
 
-    // لعبة التخمين بالبوتات الوهمية
     if (interaction.commandName === 'guess_game') {
         const secretHN = Math.floor(Math.random() * 100) + 1;
         await interaction.reply({ content: '🎮 بدأت لعبة تخمين الرقم من 1 إلى 100! اكتبوا تخميناتكم بالشات الآن (لديك دقيقة واحدة).' });
@@ -136,7 +129,7 @@ client.on('interactionCreate', async (interaction) => {
                 gameActive = false;
                 clearInterval(fakeInterval);
                 collector.stop();
-                return interaction.channel.send(`🚨 خطفها البوت! الفائز هو **${randomBot}** خمن الرقم [**${secretHN}**] بنجاح!`);
+                return interaction.channel.send(`🚨 خطفها البوت! الفائز هو **${randomBot}** خمن الرقم [**${secretHN}**] بنجاح! هاردلك للأعضاء الحقيقيين 😂.`);
             }
         }, 10000);
 
@@ -148,7 +141,7 @@ client.on('interactionCreate', async (interaction) => {
                 gameActive = false;
                 clearInterval(fakeInterval);
                 collector.stop();
-                return m.reply(`🎉 كفوووو! مبروك الفوز خمنت الرقم الصحيح [**${secretHN}**] بنجاح!`);
+                return m.reply(`🎉 كفوووو! مبروك الفوز خمنت الرقم الصحيح [**${secretHN}**] بنجاح ودمرت البوتات الوهمية!`);
             }
         });
 
