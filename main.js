@@ -158,7 +158,7 @@ async function startGuessGame(channel, language) {
 
   await channel.send({ embeds: [embed] });
 
-  // Launch fake AI players
+  // Fake AI players
   fakePlayers.forEach(player => {
     const interval = setInterval(() => {
       if (gameData.ended) {
