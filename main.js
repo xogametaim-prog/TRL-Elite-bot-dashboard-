@@ -30,26 +30,10 @@ CREATE TABLE IF NOT EXISTS users (
 `);
 
 const teams = [
-    "Argentina",
-    "Brazil",
-    "France",
-    "Spain",
-    "Germany",
-    "England",
-    "Portugal",
-    "Netherlands",
-    "Belgium",
-    "Croatia",
-    "Morocco",
-    "Japan",
-    "South Korea",
-    "Mexico",
-    "USA",
-    "Canada",
-    "Uruguay",
-    "Italy",
-    "Turkey",
-    "Saudi Arabia"
+    "Argentina", "Brazil", "France", "Spain", "Germany",
+    "England", "Portugal", "Netherlands", "Belgium", "Croatia",
+    "Morocco", "Japan", "South Korea", "Mexico", "USA",
+    "Canada", "Uruguay", "Italy", "Turkey", "Saudi Arabia"
 ];
 
 const client = new Client({
@@ -62,77 +46,51 @@ client.once(Events.ClientReady, (readyClient) => {
 
 client.on(Events.InteractionCreate, async (interaction) => {
 
-    if (interaction.isChatInputCommand()) {
+    if (!interaction.isChatInputCommand()) return;
 
-        switch (interaction.commandName) {
+    if (interaction.commandName === "pick_team") {
 
-            case "pick_team":
+        db.get("SELECT * FROM users WHERE userId = ?", [interaction.user.id], async (err, row) => {
 
-                db.get(
-                    "SELECT * FROM users WHERE userId = ?",
-                    [interaction.user.id],
-                    async (err, row) => {
-
-                        if (row) {
-                            return interaction.reply({
-                                content: `❌ اخترت منتخبك بالفعل: ${row.team}`,
-                                ephemeral: true
-                            });
-                        }
-
-                        const menu = new StringSelectMenuBuilder()
-                            .setCustomId("team_select")
-                            .setPlaceholder("اختر منتخبك")
-                            .addOptions(
-                                teams.map(team => ({
-                                    label: team,
-                                    value: team
-                                }))
-                            );
-
-                        const rowMenu = new ActionRowBuilder()
-                            .addComponents(menu);
-
-                        await interaction.reply({
-                            content: "⚽ اختر منتخبك المفضل (مرة واحدة فقط)",
-                            components: [rowMenu],
-                            ephemeral: true
-                        });
-                    }
-                );
-
-                break;
-
-            case "my_team":
-
-                db.get(
-                    "SELECT * FROM users WHERE userId = ?",
-                    [interaction.user.id],
-                    async (err, row) => {
-
-                        if (!row) {
-                            return interaction.reply({
-                                content: "❌ لم تختر منتخباً بعد",
-                                ephemeral: true
-                            });
-                        }
-
-                        await interaction.reply({
-                            content: `🏆 منتخبك المختار هو: ${row.team}`
-                        });
-                    }
-                );
-
-                break;
-
-            default:
-
-                await interaction.reply({
-                    content: "🚧 هذا الأمر قيد التطوير."
+            if (row) {
+                return interaction.reply({
+                    content: `❌ اخترت منتخبك بالفعل: ${row.team}`,
+                    ephemeral: true
                 });
+            }
 
-        }
+            const menu = new StringSelectMenuBuilder()
+                .setCustomId("team_select")
+                .setPlaceholder("اختر منتخبك")
+                .addOptions(
+                    teams.map(t => ({ label: t, value: t }))
+                );
 
+            const rowMenu = new ActionRowBuilder().addComponents(menu);
+
+            await interaction.reply({
+                content: "⚽ اختر منتخبك (مرة واحدة فقط)",
+                components: [rowMenu],
+                ephemeral: true
+            });
+        });
+    }
+
+    if (interaction.commandName === "my_team") {
+
+        db.get("SELECT * FROM users WHERE userId = ?", [interaction.user.id], (err, row) => {
+
+            if (!row) {
+                return interaction.reply({
+                    content: "❌ لم تختر منتخب بعد",
+                    ephemeral: true
+                });
+            }
+
+            interaction.reply({
+                content: `🏆 منتخبك: ${row.team}`
+            });
+        });
     }
 
     if (interaction.isStringSelectMenu()) {
@@ -141,35 +99,24 @@ client.on(Events.InteractionCreate, async (interaction) => {
 
             const team = interaction.values[0];
 
-            db.get(
-                "SELECT * FROM users WHERE userId = ?",
-                [interaction.user.id],
-                (err, row) => {
+            db.get("SELECT * FROM users WHERE userId = ?", [interaction.user.id], (err, row) => {
 
-                    if (row) {
-                        return interaction.reply({
-                            content: "❌ لا يمكنك تغيير منتخبك.",
-                            ephemeral: true
-                        });
-                    }
-
-                    db.run(
-                        "INSERT INTO users(userId, team) VALUES(?, ?)",
-                        [interaction.user.id, team]
-                    );
-
-                    interaction.reply({
-                        content: `✅ تم اختيار ${team} بنجاح!`,
+                if (row) {
+                    return interaction.reply({
+                        content: "❌ لا يمكنك التغيير",
                         ephemeral: true
                     });
-
                 }
-            );
 
+                db.run("INSERT INTO users(userId, team) VALUES(?, ?)", [interaction.user.id, team]);
+
+                interaction.reply({
+                    content: `✅ تم اختيار ${team}`,
+                    ephemeral: true
+                });
+            });
         }
-
     }
-
 });
 
 client.login(process.env.DISCORD_TOKEN);
