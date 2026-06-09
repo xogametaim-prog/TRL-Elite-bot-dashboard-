@@ -1,5 +1,3 @@
-// ================= IMPORTS =================
-
 const express = require("express");
 const sqlite3 = require("sqlite3").verbose();
 
@@ -9,7 +7,8 @@ GatewayIntentBits,
 Events,
 ActionRowBuilder,
 StringSelectMenuBuilder,
-EmbedBuilder
+EmbedBuilder,
+PermissionFlagsBits
 } = require("discord.js");
 
 // ================= WEB SERVER =================
@@ -22,90 +21,102 @@ res.send("World Cup 2026 Bot Online");
 });
 
 app.listen(PORT, () => {
-console.log("Web server running on port ${PORT}");
+console.log(`Web server running on port ${PORT}`);
 });
 
 // ================= DATABASE =================
 
 const db = new sqlite3.Database("./worldcup.db");
 
-db.run("CREATE TABLE IF NOT EXISTS users ( userId TEXT PRIMARY KEY, team TEXT NOT NULL )");
+db.run(`
+CREATE TABLE IF NOT EXISTS users (
+userId TEXT PRIMARY KEY,
+team TEXT NOT NULL
+)
+`);
 
-db.run("CREATE TABLE IF NOT EXISTS guilds ( guildId TEXT PRIMARY KEY, language TEXT NOT NULL )");
+db.run(`
+CREATE TABLE IF NOT EXISTS guilds (
+guildId TEXT PRIMARY KEY,
+language TEXT NOT NULL
+)
+`);
 
-db.run("CREATE TABLE IF NOT EXISTS leaderboard ( userId TEXT PRIMARY KEY, points INTEGER DEFAULT 0 )");
-
-// ================= TEAMS =================
-
-const teams = [
-"Argentina",
-"Brazil",
-"France",
-"Spain",
-"Germany",
-"England",
-"Portugal",
-"Netherlands",
-"Belgium",
-"Croatia",
-"Morocco",
-"Japan",
-"South Korea",
-"Mexico",
-"USA",
-"Canada",
-"Uruguay",
-"Italy",
-"Turkey",
-"Saudi Arabia"
-];
-
-// ================= FLAGS GAME =================
-
-const guessTeams = [
-{ name: "Argentina", code: "ar" },
-{ name: "Brazil", code: "br" },
-{ name: "France", code: "fr" },
-{ name: "Spain", code: "es" },
-{ name: "Germany", code: "de" },
-{ name: "Portugal", code: "pt" },
-{ name: "Netherlands", code: "nl" },
-{ name: "Belgium", code: "be" },
-{ name: "Croatia", code: "hr" },
-{ name: "Morocco", code: "ma" },
-{ name: "Japan", code: "jp" },
-{ name: "South Korea", code: "kr" },
-{ name: "Mexico", code: "mx" },
-{ name: "USA", code: "us" },
-{ name: "Canada", code: "ca" },
-{ name: "Uruguay", code: "uy" },
-{ name: "Italy", code: "it" },
-{ name: "Turkey", code: "tr" },
-{ name: "Saudi Arabia", code: "sa" }
-];
+db.run(`
+CREATE TABLE IF NOT EXISTS leaderboard (
+userId TEXT PRIMARY KEY,
+points INTEGER DEFAULT 0
+)
+`);
 
 // ================= LANGUAGES =================
 
 const texts = {
 
 ar: {
+
 help: "📖 قائمة الأوامر",
-pick: "⚽ اختر منتخبك",
-alreadyPicked: "❌ اخترت منتخبك مسبقاً",
-myTeam: "🏆 منتخبك:",
-noTeam: "❌ لم تختر منتخباً",
-guess: "🎮 خمن المنتخب",
-languageSaved: "✅ تم حفظ اللغة العربية"
+
+worldcup:
+"🏆 كأس العالم 2026 سيقام في أمريكا وكندا والمكسيك",
+
+pick:
+"⚽ اختر منتخبك المفضل",
+
+alreadyPicked:
+"❌ لقد اخترت منتخباً بالفعل",
+
+myTeam:
+"🏆 منتخبك هو",
+
+noTeam:
+"❌ لم تختر منتخباً بعد",
+
+guess:
+"🎮 خمن المنتخب",
+
+languageSaved:
+"✅ تم حفظ اللغة العربية",
+
+broadcastDone:
+"✅ تم إرسال الرسالة",
+
+leaderboard:
+"🏅 ترتيب اللاعبين"
+
 },
 
 en: {
+
 help: "📖 Commands List",
-pick: "⚽ Choose your team",
-alreadyPicked: "❌ You already selected a team",
-myTeam: "🏆 Your Team:",
-noTeam: "❌ No team selected",
-guess: "🎮 Guess The Team",
-languageSaved: "✅ English language saved"
+
+worldcup:
+"🏆 FIFA World Cup 2026 will be hosted by USA, Canada and Mexico",
+
+pick:
+"⚽ Choose your favourite team",
+
+alreadyPicked:
+"❌ You already selected a team",
+
+myTeam:
+"🏆 Your team is",
+
+noTeam:
+"❌ No team selected",
+
+guess:
+"🎮 Guess The Team",
+
+languageSaved:
+"✅ English language saved",
+
+broadcastDone:
+"✅ Message sent",
+
+leaderboard:
+"🏅 Leaderboard"
+
 }
 
 };
@@ -118,312 +129,164 @@ intents: [GatewayIntentBits.Guilds]
 
 client.once(
 Events.ClientReady,
-(readyClient) => {
+(clientReady) => {
 
 console.log(
-"Logged in as ${readyClient.user.tag}"
+`Logged in as ${clientReady.user.tag}`
 );
 
 }
 );
-// ================= INTERACTIONS =================
 
-client.on(Events.InteractionCreate, async (interaction) => {
-
-if (!interaction.guild) return;
+// ================= GET LANGUAGE =================
 
 function getLanguage(guildId) {
+
 return new Promise((resolve) => {
+
 db.get(
 "SELECT language FROM guilds WHERE guildId = ?",
 [guildId],
 (err, row) => {
+
 resolve(row?.language || "ar");
+
 }
 );
-});
-}
 
-// ================= SLASH COMMANDS =================
-
-if (interaction.isChatInputCommand()) {
-
-const lang = await getLanguage(interaction.guild.id);
-const t = texts[lang];
-
-// ===== HELP =====
-
-if (interaction.commandName === "help") {
-
-const embed = new EmbedBuilder()
-.setTitle(t.help)
-.setDescription("/help /worldcup /teams /pick_team /my_team /guess_team /leaderboard /language /broadcast");
-
-return interaction.reply({
-embeds: [embed]
 });
 
 }
+// ================= TEAMS =================
 
-// ===== WORLDCUP =====
+const teams = [
 
-if (interaction.commandName === "worldcup") {
+"USA",
+"Mexico",
+"Canada",
+"Algeria",
+"Argentina",
+"Australia",
+"Austria",
+"Belgium",
+"Bosnia",
+"Brazil",
+"Cape Verde",
+"Colombia",
+"DR Congo",
+"Cote d'Ivoire",
+"Croatia",
+"Curacao",
+"Czech Republic",
+"Ecuador",
+"Egypt",
+"England",
+"France",
+"Germany",
+"Ghana",
+"Haiti",
 
-return interaction.reply(
-lang === "ar"
-? "🏆 كأس العالم 2026 سيقام في أمريكا وكندا والمكسيك."
-: "🏆 FIFA World Cup 2026 will be hosted by USA, Canada and Mexico."
-);
+"Iran",
+"Iraq",
+"Japan",
+"Jordan",
+"South Korea",
+"Morocco",
+"Netherlands",
+"New Zealand",
+"Norway",
+"Panama",
+"Paraguay",
+"Portugal",
+"Qatar",
+"Saudi Arabia",
+"Scotland",
+"Senegal",
+"South Africa",
+"Spain",
+"Sweden",
+"Switzerland",
+"Tunisia",
+"Turkey",
+"Uruguay",
+"Uzbekistan"
 
-}
-
-// ===== TEAMS =====
-
-if (interaction.commandName === "teams") {
-
-return interaction.reply(
-teams.join(" • ")
-);
-
-}
-
-// ===== LANGUAGE =====
-
-if (interaction.commandName === "language") {
-
-const selected =
-interaction.options.getString("lang");
-
-db.run(
-"INSERT OR REPLACE INTO guilds (guildId, language) VALUES (?, ?)",
-[
-interaction.guild.id,
-selected
-]
-);
-
-return interaction.reply(
-selected === "ar"
-? texts.ar.languageSaved
-: texts.en.languageSaved
-);
-
-}
-
-// ===== PICK TEAM =====
-
-if (interaction.commandName === "pick_team") {
-
-db.get(
-"SELECT * FROM users WHERE userId = ?",
-[interaction.user.id],
-async (err, row) => {
-
-if (row) {
-
-return interaction.reply({
-content:
-"${t.alreadyPicked}: ${row.team}",
-ephemeral: true
-});
-
-}
-
-const menu =
-new StringSelectMenuBuilder()
-.setCustomId("team_select")
-.setPlaceholder(t.pick)
-.addOptions(
-teams.map(team => ({
-label: team,
-value: team
-}))
-);
-
-const rowMenu =
-new ActionRowBuilder()
-.addComponents(menu);
-
-await interaction.reply({
-content: t.pick,
-components: [rowMenu],
-ephemeral: true
-});
-
-}
-);
-
-}
-
-// ===== MY TEAM =====
-
-if (interaction.commandName === "my_team") {
-
-db.get(
-"SELECT * FROM users WHERE userId = ?",
-[interaction.user.id],
-(err, row) => {
-
-if (!row) {
-
-return interaction.reply({
-content: t.noTeam,
-ephemeral: true
-});
-
-}
-
-interaction.reply(
-"${t.myTeam} ${row.team}"
-);
-
-}
-);
-
-}
-
-// ===== GUESS TEAM =====
-
-if (interaction.commandName === "guess_team") {
-
-const randomTeam =
-guessTeams[
-Math.floor(
-Math.random() * guessTeams.length
-)
 ];
 
-const imageUrl =
-"https://flagcdn.com/w640/${randomTeam.code}.png";
+// ================= TEAM FLAGS =================
 
-const embed =
-new EmbedBuilder()
-.setTitle("🎮 Guess The Team")
-.setDescription("اكتب اسم المنتخب الظاهر في الصورة")
-.setImage(imageUrl);
+const teamFlags = {
 
-return interaction.reply({
-embeds: [embed]
-});
+"USA":
+"https://cdn.discordapp.com/attachments/1468904544321671220/1513905212201846392/USA.png",
 
-}
+"Mexico":
+"https://cdn.discordapp.com/attachments/1468904544321671220/1513905218029617182/MEX.png",
 
-// ===== LEADERBOARD =====
+"Canada":
+"https://cdn.discordapp.com/attachments/1468904544321671220/1513904410798063696/CAN.png",
 
-if (interaction.commandName === "leaderboard") {
+"Algeria":
+"https://cdn.discordapp.com/attachments/1468904544321671220/1513906087617626242/ALG.png",
 
-db.all(
-"SELECT * FROM leaderboard ORDER BY points DESC LIMIT 10",
-[],
-(err, rows) => {
+"Argentina":
+"https://cdn.discordapp.com/attachments/1468904544321671220/1513906313787215932/ARG.png",
 
-if (!rows?.length) {
+"Australia":
+"https://cdn.discordapp.com/attachments/1468904544321671220/1513906551180492971/AUS.png",
 
-return interaction.reply(
-"لا يوجد متصدرون بعد."
-);
+"Austria":
+"https://cdn.discordapp.com/attachments/1468904544321671220/1513906667237019679/AUT.png",
 
-}
+"Belgium":
+"https://cdn.discordapp.com/attachments/1468904544321671220/1513906790348226712/BEL.png",
 
-const text = rows
-.map(
-(r, i) =>
-"${i + 1}. <@${r.userId}> - ${r.points}"
-)
-.join("\n");
+"Bosnia":
+"https://cdn.discordapp.com/attachments/1468904544321671220/1513906992207630427/BIH.png",
 
-interaction.reply(text);
+"Brazil":
+"https://cdn.discordapp.com/attachments/1468904544321671220/1513908176137748613/BRA.png",
 
-}
-);
+"Cape Verde":
+"https://cdn.discordapp.com/attachments/1468904544321671220/1513908274368348200/CPV.png",
 
-}
+"Colombia":
+"https://cdn.discordapp.com/attachments/1468904544321671220/1513908455994429512/COL.png",
 
-// ===== BROADCAST =====
+"DR Congo":
+"https://cdn.discordapp.com/attachments/1468904544321671220/1513908591680294962/COD.png",
 
-if (interaction.commandName === "broadcast") {
+"Cote d'Ivoire":
+"https://cdn.discordapp.com/attachments/1468904544321671220/1513908707686224002/CIV.png",
 
-const message =
-interaction.options.getString("message");
+"Croatia":
+"https://cdn.discordapp.com/attachments/1468904544321671220/1513909283111178390/CRO.png",
 
-await interaction.reply({
-content: "📨 جاري الإرسال...",
-ephemeral: true
-});
+"Curacao":
+"https://cdn.discordapp.com/attachments/1468904544321671220/1513909401457659934/CUW.png",
 
-const members =
-await interaction.guild.members.fetch();
+"Czech Republic":
+"https://cdn.discordapp.com/attachments/1468904544321671220/1513910724903043335/CZE.png",
 
-let sent = 0;
+"Ecuador":
+"https://cdn.discordapp.com/attachments/1468904544321671220/1513911000250843337/ECU.png",
 
-for (const member of members.values()) {
+"Egypt":
+"https://cdn.discordapp.com/attachments/1468904544321671220/1513911250739007549/EGY.png",
 
-if (member.user.bot) continue;
+"England":
+"https://cdn.discordapp.com/attachments/1468904544321671220/1513911313422880788/ENG.png",
 
-try {
-await member.send(message);
-sent++;
-} catch {}
+"France":
+"https://cdn.discordapp.com/attachments/1468904544321671220/1513911401448603809/FRA.png",
 
-}
+"Germany":
+"https://cdn.discordapp.com/attachments/1468904544321671220/1513911493530484807/GER.png",
 
-interaction.followUp({
-content: "✅ تم الإرسال إلى ${sent} عضو",
-ephemeral: true
-});
+"Ghana":
+"https://cdn.discordapp.com/attachments/1468904544321671220/1513911571179638876/GHA.png",
 
-}
+"Haiti":
+"https://cdn.discordapp.com/attachments/1468904544321671220/1513911750888784072/HAI.png"
 
-}
-
-// ================= SELECT MENU =================
-
-if (interaction.isStringSelectMenu()) {
-
-if (interaction.customId === "team_select") {
-
-const team =
-interaction.values[0];
-
-db.get(
-"SELECT * FROM users WHERE userId = ?",
-[interaction.user.id],
-(err, row) => {
-
-if (row) {
-
-return interaction.reply({
-content: "❌ لا يمكنك تغيير المنتخب.",
-ephemeral: true
-});
-
-}
-
-db.run(
-"INSERT INTO users(userId, team) VALUES(?, ?)",
-[
-interaction.user.id,
-team
-]
-);
-
-interaction.reply({
-content:
-"✅ تم اختيار ${team}",
-ephemeral: true
-});
-
-}
-);
-
-}
-
-}
-
-});
-
-// ================= LOGIN =================
-
-client.login(
-process.env.DISCORD_TOKEN
-);
+};
