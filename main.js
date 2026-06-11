@@ -1,12 +1,11 @@
 /**
- * Bot Version: 3.5 (Full Cloud & Interactivity Edition)
+ * Bot Version: 3.5 (Full Features & Direct Deployment Edition)
  * Developer: ta_im1
  * Team: TRL for development
  */
 
 const { Client, GatewayIntentBits, EmbedBuilder, REST, Routes, SlashCommandBuilder, ActionRowBuilder, ButtonBuilder, ButtonStyle, ComponentType, PermissionFlagsBits } = require('discord.js');
 const express = require('express');
-const { Pool } = require('pg');
 
 // 1️⃣ إعداد خادم الويب (حل مشكلة الـ Port Scan و الـ Timeout على Render)
 const app = express();
@@ -25,76 +24,45 @@ const client = new Client({
     ]
 });
 
-const BOT_VERSION = "3.5v ☁️ Cloud Persistence Edition";
+const BOT_VERSION = "3.5v 💾 Full Standalone Edition";
 const footerText = { text: "Development: ta_im1 | Team: TRL for development" };
 const activeGames = new Set();
 
-// 3️⃣ إعداد قاعدة البيانات السحابية (Supabase)
-const pool = new Pool({
-    connectionString: process.env.DATABASE_URL,
-    ssl: { rejectUnauthorized: false }
-});
+// 🧠 ذاكرة الحفظ البديلة (تشتغل بالكامل بالتوكن فقط دون الحاجة لداتابيز حالياً)
+const tempUsers = new Map();
 
-async function initDatabase() {
-    try {
-        await pool.query(`
-            CREATE TABLE IF NOT EXISTS users (
-                userId TEXT PRIMARY KEY,
-                username TEXT,
-                points INTEGER DEFAULT 0,
-                favoriteTeam TEXT DEFAULT 'لم يحدد بعد ⚽',
-                lastLuckyCard TEXT,
-                goalsScored INTEGER DEFAULT 0
-            )
-        `);
-        await pool.query(`
-            CREATE TABLE IF NOT EXISTS config (
-                guildId TEXT PRIMARY KEY,
-                newsChannelId TEXT,
-                verificationRole TEXT
-            )
-        `);
-        await pool.query(`
-            CREATE TABLE IF NOT EXISTS predictions (
-                userId TEXT PRIMARY KEY,
-                prediction TEXT
-            )
-        `);
-        console.log('✅ Connected to Cloud Database successfully!');
-    } catch (err) {
-        console.error('❌ Database Init Error:', err);
+function getUserData(userId, username) {
+    if (!tempUsers.has(userId)) {
+        tempUsers.set(userId, {
+            userId: userId,
+            username: username || 'مشجع مونديالي',
+            points: 0,
+            favoriteTeam: 'لم يحدد بعد ⚽',
+            goalsScored: 0
+        });
     }
+    return tempUsers.get(userId);
 }
-initDatabase();
 
-// دالة إضافة النقاط وإرسال تنبيه خاص للعضو (DM)
+// دالة إضافة النقاط وإرسال تنبيه خاص للعضو على الخاص تلقائياً (DM)
 async function addPoints(userId, username, amount) {
-    let newPoints = amount;
-    const res = await pool.query('SELECT points FROM users WHERE userId = $1', [userId]);
-    if (res.rows.length > 0) {
-        newPoints = res.rows[0].points + amount;
-        await pool.query('UPDATE users SET points = $1, username = $2 WHERE userId = $3', [newPoints, username, userId]);
-    } else {
-        await pool.query('INSERT INTO users (userId, username, points) VALUES ($1, $2, $3)', [userId, username, amount]);
-    }
+    const userData = getUserData(userId, username);
+    userData.points += amount;
+    if (username) userData.username = username;
 
     // إرسال رسالة خاصة تلقائياً عند كسب نقاط
     try {
         const user = await client.users.fetch(userId);
         if (user) {
-            await user.send(`🎉 مبروك يا بطل! لقد حصلت على **+${amount}** نقطة جديدة!\nرصيدك الإجمالي الحالي هو: \`${newPoints}\` نقطة 🏆`);
+            await user.send(`🎉 مبروك يا بطل! لقد حصلت على **+${amount}** نقطة جديدة!\nرصيدك الإجمالي الحالي هو: \`${userData.points}\` نقطة 🏆`);
         }
     } catch (e) {
-        console.log(`Could not send DM to user ${userId}, probably DMs are closed.`);
+        console.log(`Could not send DM to user ${userId}, DMs might be closed.`);
     }
-    return newPoints;
+    return userData.points;
 }
 
-async function addPenaltyGoal(userId) {
-    await pool.query('UPDATE users SET goalsScored = goalsScored + 1 WHERE userId = $1', [userId]);
-}
-
-// القواميس والبيانات الأساسية للالعاب والفرق
+// القواميس والبيانات الأساسية للالعاب
 const flagData = [
     { countryAr: "المغرب", countryEn: "morocco", flagUrl: "https://flagcdn.com/w640/ma.png" },
     { countryAr: "السعودية", countryEn: "saudi arabia", flagUrl: "https://flagcdn.com/w640/sa.png" },
@@ -104,30 +72,23 @@ const flagData = [
     { countryAr: "البرازيل", countryEn: "brazil", flagUrl: "https://flagcdn.com/w640/br.png" }
 ];
 
-const playerData = [
-    { nameAr: "ميسي", nameEn: "messi", hints: ["أسطورة الأرجنتين وحامل اللقب الأخير 🇦رجنتين 🇦🇷", "صاحب الرقم 10 التاريخي"] },
-    { nameAr: "رونالدو", nameEn: "ronaldo", hints: ["الهداف التاريخي لمنتخب البرتغال 🇵🇹", "يلقب بالدون أو الـ CR7"] }
-];
-
 const teamsList = [
     { name: "🇲🇦 المغرب", id: "morocco" }, { name: "🇸🇦 السعودية", id: "saudi_arabia" },
     { name: "🇪🇬 مصر", id: "egypt" }, { name: "🇦🇷 الأرجنتين", id: "argentina" },
     { name: "🇧🇷 البرازيل", id: "brazil" }, { name: "🇫🇷 فرنسا", id: "france" }
 ];
 
-// 4️⃣ تسجيل الـ Slash Commands
+// 3️⃣ تسجيل الـ Slash Commands الشاملة لجميع الميزات
 client.once('ready', async () => {
     console.log(`Logged in as ${client.user.tag}! Version: ${BOT_VERSION}`);
 
     const commands = [
         new SlashCommandBuilder().setName('help').setDescription('عرض دليل المساعدة والأوامر بالكامل'),
         new SlashCommandBuilder().setName('teams').setDescription('عرض المنتخبات والمجموعات المبرمجة'),
-        new SlashCommandBuilder().setName('guess-flag').setDescription('بدء جولة تخمين سريعة لاسم العلم'),
-        new SlashCommandBuilder().setName('guess-player').setDescription('بدء تحدي "من أنا؟" لتخمين نجم المونديال'),
+        new SlashCommandBuilder().setName('guess-flag').setDescription('بدء جولة تخمين سريعة لاسم العلم عبر السلاش كوماند'),
         new SlashCommandBuilder().setName('profile').setDescription('عرض ملفك الشخصي الرياضي، نقاطك وفريقك المفضل'),
         new SlashCommandBuilder().setName('countdown').setDescription('مؤقت الوقت المتبقي لصافرة البداية والافتتاح'),
         new SlashCommandBuilder().setName('leaderboard').setDescription('عرض لوحة الصدارة لأعلى المشجعين بالنقاط'),
-        new SlashCommandBuilder().setName('lucky-card').setDescription('اسحب بطاقتك المونديالية اليومية لتربح جوائز ونقاط'),
         new SlashCommandBuilder().setName('penalty').setDescription('تحدي ركلات الترجيح المباشر بالأزرار ضد البوت'),
         new SlashCommandBuilder().setName('setup-verify').setDescription('إنشاء رسالة التحقق والـ Verification التلقائية بالأزرار (للإدارة)'),
         new SlashCommandBuilder().setName('guess-nationality').setDescription('بدء لعبة خمن جنسية اللاعب الجديدة (شبكة 3x3)'),
@@ -153,18 +114,6 @@ client.once('ready', async () => {
             .setName('choose-team')
             .setDescription('اختر فريقك الذي تدعمه وتشجعه في المونديال')
             .addStringOption(opt => opt.setName('team').setDescription('اختر المنتخب المفضل').setRequired(true).addChoices(...teamsList.map(t => ({ name: t.name, value: t.name })))),
-
-        new SlashCommandBuilder()
-            .setName('predict')
-            .setDescription('توقع نتيجة مباراة الافتتاح واكسب نقاط!')
-            .addIntegerOption(opt => opt.setName('mexico').setDescription('أهداف المكسيك').setRequired(true))
-            .addIntegerOption(opt => opt.setName('canada').setDescription('أهداف كندا').setRequired(true)),
-
-        new SlashCommandBuilder()
-            .setName('set-news')
-            .setDescription('تحديد قناة بث مباريات وأحداث كأس العالم المباشرة')
-            .setDefaultMemberPermissions(PermissionFlagsBits.ManageChannels)
-            .addChannelOption(opt => opt.setName('room').setDescription('اختر الروم المخصص للاخبار').setRequired(true))
     ].map(cmd => cmd.toJSON());
 
     const rest = new REST({ version: '10' }).setToken(process.env.TOKEN);
@@ -174,99 +123,97 @@ client.once('ready', async () => {
     } catch (error) { console.error(error); }
 });
 
-// 5️⃣ محرك الألعاب والـ messageCreate التفاعلي القديم والجديد
-async function startGuessGame(channel, type = 'flag') {
+// 4️⃣ نظام تشغيل الألعاب الكلاسيكية القديمة عن طريق الشات (.w)
+async function startGuessGame(channel) {
     if (activeGames.has(channel.id)) return channel.send('❌ هناك جولة قائمة بالفعل في هذه القناة!');
     activeGames.add(channel.id);
 
-    if (type === 'flag') {
-        const chosen = flagData[Math.floor(Math.random() * flagData.length)];
-        const gameEmbed = new EmbedBuilder().setTitle('🤔 خمن اسم الدولة صاحبة هذا العلم!').setImage(chosen.flagUrl).setColor(0xF39C12).setFooter(footerText);
-        await channel.send({ embeds: [gameEmbed] });
+    const chosen = flagData[Math.floor(Math.random() * flagData.length)];
+    const gameEmbed = new EmbedBuilder().setTitle('🤔 خمن اسم الدولة صاحبة هذا العلم!').setImage(chosen.flagUrl).setColor(0xF39C12).setFooter(footerText);
+    await channel.send({ embeds: [gameEmbed] });
 
-        const filter = res => { const ans = res.content.trim().toLowerCase(); return ans === chosen.countryAr || ans === chosen.countryEn; };
-        const collector = channel.createMessageCollector({ filter, time: 15000, max: 1 });
-        let won = false;
+    const filter = res => { const ans = res.content.trim().toLowerCase(); return ans === chosen.countryAr || ans === chosen.countryEn; };
+    const collector = channel.createMessageCollector({ filter, time: 15000, max: 1 });
+    let won = false;
 
-        collector.on('collect', async m => {
-            won = true;
-            const total = await addPoints(m.author.id, m.author.username, 1);
-            await channel.send({ embeds: [new EmbedBuilder().setTitle('🎉 إجابة صحيحة!').setDescription(`الدولة هي: **${chosen.countryAr}**\nتم منحك **+1 نقطة**! رصيدك: \`${total}\``).setColor(0x2ECC71).setFooter(footerText)] });
-            collector.stop();
-        });
-        collector.on('end', () => { activeGames.delete(channel.id); if (!won) channel.send(`⏱️ انتهى الوقت! الدولة هي: **${chosen.countryAr}**`); });
-    }
+    collector.on('collect', async m => {
+        won = true;
+        const total = await addPoints(m.author.id, m.author.username, 1);
+        await channel.send({ embeds: [new EmbedBuilder().setTitle('🎉 إجابة صحيحة!').setDescription(`الدولة هي: **${chosen.countryAr}**\nتم منحك **+1 نقطة**! رصيدك الإجمالي: \`${total}\``).setColor(0x2ECC71).setFooter(footerText)] });
+        collector.stop();
+    });
+    collector.on('end', () => { activeGames.delete(channel.id); if (!won) channel.send(`⏱️ انتهى الوقت! الدولة هي: **${chosen.countryAr}**`); });
 }
 
-// استقبال الأوامر السريعة وأمر الإداريين المطور للإرسال الخاص لقائمة السيرفر كاملاً
+// 5️⃣ استقبال الأوامر النصية العادية ونظام الإرسال الجماعي للإدارة (DM ALL)
 client.on('messageCreate', async message => {
     if (message.author.bot || !message.guild) return;
     
+    // تشغيل جولة الأعلام بالأمر الكلاسيكي
     if (message.content.trim().toLowerCase() === '.w') {
-        await startGuessGame(message.channel, 'flag');
+        await startGuessGame(message.channel);
     }
 
-    // أمر الإداريين المخصص لإرسال رسائل خاصة لجميع الأعضاء (DM ALL)
+    // أمر الإداريين الحصري المطور لإرسال رسائل خاصة لجميع أعضاء السيرفر عبر البوت (DM ALL)
     if (message.content.startsWith('/dm-all')) {
+        // حظر الأوامر الحساسة عن الأعضاء العاديين
         if (!message.member.permissions.has(PermissionFlagsBits.Administrator)) {
-            return message.reply('❌ هذا الأمر مخصص فقط لمسؤولي السيرفر (Administrator)!');
+            return message.reply('❌ خطأ إداري: هذا الأمر مخصص فقط لمسؤولي السيرفر (Administrator)!');
         }
         const textToSend = message.content.replace('/dm-all', '').trim();
         if (!textToSend) return message.reply('❌ يرجى كتابة نص الرسالة بعد الأمر! مثال: `/dm-all أهلاً بالجميع`');
 
         try {
             const members = await message.guild.members.fetch();
-            let count = 0;
             members.forEach(member => {
                 if (!member.user.bot) {
-                    member.send(`📢 **رسالة إدارية هامة من سيرفرنا:**\n\n${textToSend}`).then(() => count++).catch(() => {});
+                    member.send(`📢 **رسالة إدارية هامة من سيرفرنا:**\n\n${textToSend}`).catch(() => {});
                 }
             });
-            await message.reply(`✅ جاري إرسال الرسالة الخاصة للأعضاء في الخلفية بنجاح!`);
-        } catch (err) {
-            message.reply('❌ واجهت مشكلة أثناء جلب الأعضاء.');
-        }
+            await message.reply(`✅ جاري إرسال الرسالة الخاصة لجميع الأعضاء في الخاص بنجاح!`);
+        } catch (err) { message.reply('❌ واجهت مشكلة أثناء محاولة جلب أعضاء السيرفر.'); }
     }
 });
 
-// 6️⃣ معالجة الأوامر التفاعلية والأزرار بالكامل
+// 6️⃣ ميكانيكية معالجة أزرار التفاعل، الألعاب (3x3)، والإنترأكشنز بالكامل
 client.on('interactionCreate', async interaction => {
     if (interaction.isButton()) {
+        // نظام رول التحقق (Verification System)
         if (interaction.customId === 'verify_member') {
             await interaction.deferReply({ ephemeral: true });
             let verifyRole = interaction.guild.roles.cache.find(r => r.name.toLowerCase() === 'member');
-            if (!verifyRole) return interaction.editReply({ content: '❌ لم يتم العثور على رتبة باسم `Member`.' });
+            if (!verifyRole) return interaction.editReply({ content: '❌ لم يتم العثور على رتبة باسم `Member` في السيرفر.' });
             try {
                 await interaction.member.roles.add(verifyRole);
                 return interaction.editReply({ content: `✅ تم التحقق منك بنجاح ورتبتك جاهزة! 🎉` });
-            } catch (err) { return interaction.editReply({ content: '❌ مشكلة في إعطاء الرتبة.' }); }
+            } catch (err) { return interaction.editReply({ content: '❌ واجهت مشكلة في منحك الرتبة تلقائياً.' }); }
         }
 
-        // منطق التحقق للعبة خمن جنسية اللاعب (3x3 Grid)
+        // منطق التحقق والضغط للعبة خمن جنسية اللاعب الجديدة (3x3 Grid)
         if (interaction.customId.startsWith('nat_')) {
             await interaction.deferReply({ ephemeral: true });
             const answer = interaction.customId.split('_')[1];
             if (answer === 'correct') {
                 const total = await addPoints(interaction.user.id, interaction.user.username, 1);
                 await interaction.editReply({ content: `✅ كفوو! إجابة صحيحة تامة! نلت **+1 نقطة** وعلم البرازيل هو جنسية نيمار الصحيحة! رصيدك الإجمالي: \`${total}\`` });
-                await interaction.message.delete().catch(() => {});
+                await interaction.message.delete().catch(() => {}); // حذف الرسالة بعد الإجابة الصحيحة منعاً للتكرار
             } else {
-                await interaction.editReply({ content: `❌ خطأ! هذا العلم ليس الجنسية الصحيحة للاعب، حاول في التحدي القادم!` });
+                await interaction.editReply({ content: `❌ خطأ! هذا العلم ليس الجنسية الصحيحة للاعب نيمار، حاول مرة أخرى في التحدي القادم!` });
             }
         }
         return;
     }
 
     if (!interaction.isChatInputCommand()) return;
-    const { commandName, options, channel, user, guild } = interaction;
+    const { commandName, options, channel, user } = interaction;
 
-    // حماية أوامر المسؤولين التلقائية بسيرفر ديسكورد
-    const isAdminCommand = ['setup-verify', 'match-poll', 'giveaway', 'set-news'].includes(commandName);
+    // حماية الأوامر الحساسة والتحقق التلقائي من الـ Administrator للأوامر المعينة
+    const isAdminCommand = ['setup-verify', 'match-poll', 'giveaway'].includes(commandName);
     if (isAdminCommand && !interaction.member.permissions.has(PermissionFlagsBits.Administrator)) {
         return interaction.reply({ content: '❌ خطأ إداري: هذا الأمر مخصص فقط لمسؤولي السيرفر (Administrator)!', ephemeral: true });
     }
 
-    // لعبة خمن جنسية اللاعب المفتوحة المحدثة 3x3
+    // أمر لعبة خمن جنسية اللاعب المحدثة كلياً بمقاس شبكة 3x3 بالأزرار
     if (commandName === 'guess-nationality') {
         await interaction.deferReply();
         const row1 = new ActionRowBuilder().addComponents(
@@ -276,7 +223,7 @@ client.on('interactionCreate', async interaction => {
         );
         const row2 = new ActionRowBuilder().addComponents(
             new ButtonBuilder().setCustomId('nat_wrong4').setLabel('🇲🇽 المكسيك').setStyle(ButtonStyle.Secondary),
-            new ButtonBuilder().setCustomId('nat_correct').setLabel('🇧🇷 البرازيل').setStyle(ButtonStyle.Success), // الإجابة الصح
+            new ButtonBuilder().setCustomId('nat_correct').setLabel('🇧🇷 البرازيل').setStyle(ButtonStyle.Success), // العلم الصحيح
             new ButtonBuilder().setCustomId('nat_wrong5').setLabel('🇦🇷 الأرجنتين').setStyle(ButtonStyle.Secondary)
         );
         const row3 = new ActionRowBuilder().addComponents(
@@ -294,23 +241,23 @@ client.on('interactionCreate', async interaction => {
         await interaction.editReply({ embeds: [embed], components: [row1, row2, row3] });
     }
 
+    // أمر عرض البروفايل الشخصي الرياضي والنقاط للأعضاء
     if (commandName === 'profile') {
         await interaction.deferReply();
-        const res = await pool.query('SELECT points, favoriteTeam, goalsScored FROM users WHERE userId = $1', [user.id]);
-        let userData = res.rows[0] || { points: 0, favoriteTeam: 'لم يحدد بعد ⚽', goalsScored: 0 };
-
+        const userData = getUserData(user.id, user.username);
         const profileEmbed = new EmbedBuilder()
             .setTitle(`🪪 الهوية الرياضية لـ ${user.username}`)
             .setColor(0x27AE60)
             .setThumbnail(user.displayAvatarURL({ dynamic: true }))
             .addFields(
                 { name: '🥇 إجمالي نقاطك:', value: `\`${userData.points}\` نقطة`, inline: true },
-                { name: '🥅 أهداف الترجيح:', value: `\`${userData.goalsScored || 0}\` هدف`, inline: true },
+                { name: '🥅 أهداف الترجيح:', value: `\`${userData.goalsScored}\` هدف`, inline: true },
                 { name: '❤️ المنتخب المشجع:', value: `**${userData.favoriteTeam}**`, inline: false }
             ).setFooter(footerText);
         await interaction.editReply({ embeds: [profileEmbed] });
     }
 
+    // لعبة ركلات الترجيح المباشرة بالأزرار ضد البوت لزيادة التفاعل
     if (commandName === 'penalty') {
         await interaction.deferReply();
         const rowAction = new ActionRowBuilder().addComponents(
@@ -318,36 +265,39 @@ client.on('interactionCreate', async interaction => {
             new ButtonBuilder().setCustomId('shoot_center').setLabel('وسط ⬆️').setStyle(ButtonStyle.Secondary),
             new ButtonBuilder().setCustomId('shoot_right').setLabel('يمين ➡️').setStyle(ButtonStyle.Primary)
         );
-        const startEmbed = new EmbedBuilder().setTitle('⚽ تحدي ركلات الترجيح الكبرى 🥅').setDescription(`سدد الآن يا بطل!`).setColor(0x2980B9).setFooter(footerText);
+        const startEmbed = new EmbedBuilder().setTitle('⚽ تحدي ركلات الترجيح الكبرى 🥅').setDescription(`سدد الآن يا بطل واهزم الحارس!`).setColor(0x2980B9).setFooter(footerText);
         const msg = await interaction.editReply({ embeds: [startEmbed], components: [rowAction] });
         const collector = msg.createMessageComponentCollector({ componentType: ComponentType.Button, time: 20000 });
 
         collector.on('collect', async btnInteraction => {
-            if (btnInteraction.user.id !== user.id) return btnInteraction.reply({ content: '❌ ليس دورك!', ephemeral: true });
+            if (btnInteraction.user.id !== user.id) return btnInteraction.reply({ content: '❌ ليس دورك في هذا التحدي الحماسي!', ephemeral: true });
             await btnInteraction.deferUpdate();
             const botGoalkeeperJump = ['shoot_left', 'shoot_center', 'shoot_right'][Math.floor(Math.random() * 3)];
             
             if (btnInteraction.customId === botGoalkeeperJump) {
-                await interaction.editReply({ embeds: [new EmbedBuilder().setTitle('❌ تصدى لها الحارس!').setColor(0xC0392B).setFooter(footerText)], components: [] });
+                await interaction.editReply({ embeds: [new EmbedBuilder().setTitle('❌ تصدى لها الحارس ببراعة! حظاً أوفر في المرة القادمة.').setColor(0xC0392B).setFooter(footerText)], components: [] });
             } else {
+                const userData = getUserData(user.id, user.username);
+                userData.goalsScored++;
                 const newTotal = await addPoints(user.id, user.username, 1);
-                await addPenaltyGoal(user.id);
-                await interaction.editReply({ embeds: [new EmbedBuilder().setTitle('⚽ هدف هز الشباك المونديالية الحارقة!').setDescription(`تم إضافة **+1 نقطة** وترقية رصيدك سحابياً وبإشعار خاص! رصيدك: \`${newTotal}\``).setColor(0x27AE60).setFooter(footerText)], components: [] });
+                await interaction.editReply({ embeds: [new EmbedBuilder().setTitle('⚽ هدف هز الشباك المونديالية الحارقة!').setDescription(`تم إضافة **+1 نقطة** وترقية رصيدك وإرسال إشعار خاص لك! رصيدك: \`${newTotal}\``).setColor(0x27AE60).setFooter(footerText)], components: [] });
             }
             collector.stop();
         });
     }
 
+    // عرض قائمة المتصدرين المشجعين في السيرفر
     if (commandName === 'leaderboard') {
         await interaction.deferReply();
-        const res = await pool.query('SELECT username, points, favoriteTeam FROM users ORDER BY points DESC LIMIT 10');
-        if (res.rows.length === 0) return interaction.editReply({ content: '📊 لا توجد نقاط مسجلة حالياً!' });
+        const sortedUsers = Array.from(tempUsers.values()).sort((a, b) => b.points - a.points).slice(0, 10);
+        if (sortedUsers.length === 0) return interaction.editReply({ content: '📊 لا توجد نقاط مسجلة للأعضاء حالياً في السيرفر!' });
 
-        let description = "🏆 **ترتيب أعلى 10 مشجعين بالنقاط في السحاب:**\n\n";
-        res.rows.forEach((row, index) => { description += `${index + 1}. **${row.username}** — \`${row.points}\` نقطة [الفريق: ${row.favoriteteam}]\n`; });
-        await interaction.editReply({ embeds: [new EmbedBuilder().setTitle('📊 لوحة الصدارة العالمية').setDescription(description).setColor(0xF1C40F).setFooter(footerText)] });
+        let description = "🏆 **ترتيب أعلى المشجعين بالنقاط حالياً:**\n\n";
+        sortedUsers.forEach((row, index) => { description += `${index + 1}. **${row.username}** — \`${row.points}\` نقطة [الفريق: ${row.favoriteTeam}]\n`; });
+        await interaction.editReply({ embeds: [new EmbedBuilder().setTitle('📊 لوحة الصدارة الرياضية').setDescription(description).setColor(0xF1C40F).setFooter(footerText)] });
     }
 
+    // نظام تصويت المراهنات والمباريات التفاعلي بالإيمبيد المحدث للوقت الحقيقي والتحديث الفوري
     if (commandName === 'match-poll') {
         await interaction.deferReply();
         const desc = options.getString('description');
@@ -360,8 +310,8 @@ client.on('interactionCreate', async interaction => {
 
         const generateEmbed = () => {
             return new EmbedBuilder()
-                .setTitle('📊 تصويت ومراهنة على مباراة مونديالية حية!')
-                .setDescription(`🏆 **تفاصيل الحدث:**\n${desc}\n\nاضغط لتوقعك الفائز!`)
+                .setTitle('📊 تصويت لمباراة مونديالية حية!')
+                .setDescription(`🏆 **تفاصيل الحدث والقمة:**\n${desc}\n\nاضغط على الأزرار لتوقع المنتخب الفائز!`)
                 .addFields(
                     { name: `🔹 ${t1}`, value: `\`${votes.t1}\` تصويت`, inline: true },
                     allowDraw ? { name: `🤝 التعادل`, value: `\`${votes.draw}\` تصويت`, inline: true } : { name: '—', value: '—', inline: true },
@@ -379,7 +329,7 @@ client.on('interactionCreate', async interaction => {
         const collector = pollMessage.createMessageComponentCollector({ componentType: ComponentType.Button, time: 24 * 60 * 60 * 1000 });
 
         collector.on('collect', async btnInt => {
-            if (votedUsers.has(btnInt.user.id)) return btnInt.reply({ content: '❌ لقد قمت بالتصويت مسبقاً!', ephemeral: true });
+            if (votedUsers.has(btnInt.user.id)) return btnInt.reply({ content: '❌ لقد قمت بالتصويت مسبقاً في هذا الاستبيان المونديالي!', ephemeral: true });
             votedUsers.add(btnInt.user.id);
             if (btnInt.customId === 'vote_t1') votes.t1++;
             if (btnInt.customId === 'vote_t2') votes.t2++;
@@ -389,24 +339,25 @@ client.on('interactionCreate', async interaction => {
         });
     }
 
+    // نظام القيف اوي المنظم بالوقت والعد التنازلي الإلكتروني والمنشن للفائزين تلقائياً
     if (commandName === 'giveaway') {
-        await interaction.reply({ content: '🎉 تم إطلاق القيف اوي بنجاح في الغرفة!', ephemeral: true });
+        await interaction.reply({ content: '🎉 تم إطلاق القيف اوي بنجاح في الغرفة وجاري استقبال المشتركين!', ephemeral: true });
         const prize = options.getString('prize');
         const duration = options.getInteger('duration');
         const unit = options.getString('unit');
         const customEmoji = options.getString('emoji');
-        const winnersCount = options.getInteger('winners');
+        const winnersCount = options.getInteger('winners') || 1;
 
         const durationMs = unit === 'm' ? duration * 60 * 1000 : duration * 60 * 60 * 1000;
         const endTimestamp = Math.floor((Date.now() + durationMs) / 1000);
 
         const giveawayEmbed = new EmbedBuilder()
             .setTitle(`🎁 قيف اوي المونديال الكبرى`)
-            .setDescription(`🏆 **الجائزة المتاحة:** **${prize}**\n⚡ **عدد الفائزين:** \`${winnersCount}\`\n⏱️ **ينتهي في:** <t:${endTimestamp}:R>\n\nاضغط على الإيموجي لتشترك!`)
-            .setColor(0xD35400).setFooter(footerText);
+            .setDescription(`🏆 **الجائزة المتاحة:** **${prize}**\n⚡ **عدد الفائزين المطلبوين:** \`${winnersCount}\`\n⏱️ **ينتهي الحدث في:** <t:${endTimestamp}:R>\n\nاضغط على الإيموجي في الأسفل لتشترك!`)
+            .setColor(0x27AE60).setFooter(footerText);
 
         const giveawayMsg = await channel.send({ embeds: [giveawayEmbed] });
-        try { await giveawayMsg.react(customEmoji); } catch (err) { return channel.send('❌ خطأ في الإيموجي.'); }
+        try { await giveawayMsg.react(customEmoji); } catch (err) { return; }
 
         setTimeout(async () => {
             try {
@@ -416,37 +367,40 @@ client.on('interactionCreate', async interaction => {
                 const usersReaction = await reaction.users.fetch();
                 const eligibleUsers = usersReaction.filter(u => !u.bot).map(u => u.id);
 
-                if (eligibleUsers.length === 0) return channel.send(`😔 انتهى وقت القيف اوي ولم يشترك أحد!`);
+                if (eligibleUsers.length === 0) return channel.send(`😔 انتهى وقت القيف اوي للأسف ولم يقم أحد بالتفاعل مع الإيموجي!`);
                 const shuffled = eligibleUsers.sort(() => 0.5 - Math.random());
                 const winners = shuffled.slice(0, winnersCount).map(id => `<@${id}>`);
 
-                await channel.send({ content: `🥳 مبروك للفائزين بالقيف اوي: ${winners.join(', ')}! جاري الحفظ والتوزيع التلقائي.` });
+                await channel.send({ content: `🥳 مبروك للفائزين معنا بالقيف اوي المونديالي: ${winners.join(', ')}! تواصلوا مع الإدارة لاستلام الجائزة!` });
             } catch (err) { console.error(err); }
         }, durationMs);
     }
 
+    // أمر اختيار وتحديد العضو لمنتخبه الرياضي المفضل لحفظه
     if (commandName === 'choose-team') {
         await interaction.deferReply();
         const selectedTeam = options.getString('team');
-        await pool.query('INSERT INTO users (userId, username, favoriteTeam) VALUES ($1, $2, $3) ON CONFLICT(userId) DO UPDATE SET favoriteTeam = $4, username = $5', [user.id, user.username, selectedTeam, selectedTeam, user.username]);
-        await interaction.editReply({ content: `🏆 تم تسجيل **${selectedTeam}** كفريقك المفضل المشجع بنجاح سحابياً! 🔥` });
+        const userData = getUserData(user.id, user.username);
+        userData.favoriteTeam = selectedTeam;
+        await interaction.editReply({ content: `🏆 تم تسجيل **${selectedTeam}** كفريقك ومنتخبك المفضّل المشجع بنجاح! 🔥` });
     }
 
+    // أمر بناء قائمة وقائمة المساعدة الشاملة
     if (commandName === 'help') {
         await interaction.deferReply();
         const helpEmbed = new EmbedBuilder()
-            .setTitle(`📖 دليل الأوامر وتحديثات v3.5 الشاملة`)
+            .setTitle(`📖 دليل الأوامر وتحديثات v3.5 الشاملة والكاملة`)
             .addFields(
                 { name: '🎮 الألعاب والتحديات الترفيهية', value: '`/penalty` | `/guess-nationality` | `/guess-flag` | `.w`', inline: true },
-                { name: '🏆 شؤون الكأس والملف', value: '`/profile` | `/choose-team` | `/leaderboard`', inline: true },
-                { name: '🛠️ أدوات الإدارة الصارمة', value: '`/match-poll` | `/giveaway` | `/set-news` | `/dm-all (في الشات)`', inline: false }
+                { name: '🏆 شؤون الكأس والملف الرياضي', value: '`/profile` | `/choose-team` | `/leaderboard`', inline: true },
+                { name: '🛠️ أدوات الإدارة الصارمة والمشرفين', value: '`/match-poll` | `/giveaway` | `/dm-all (في شات السيرفر)`', inline: false }
             ).setColor(0x8E44AD).setFooter(footerText);
         await interaction.editReply({ embeds: [helpEmbed] });
     }
     
-    // الأوامر المتبقية المساعدة مثل البث والتايموت
-    if (commandName === 'countdown') {
-        await interaction.reply({ content: `🏟️ المتبقي على الافتتاح الرسمي التاريخي المونديالي بالمكسيك 2026 يقترب جداً! استعدوا للصافرة!` });
-    }
-    if (commandName === 'teams') {
-        await interaction.reply({ content: `🌍 **المجموعات
+    // الأوامر النصية المساعدة التكميلية
+    if (commandName === 'countdown') await interaction.reply({ content: ` Stadiums are completely ready for World Cup 2026 matches! 🏟️` });
+    if (commandName === 'teams') await interaction.reply({ content: `🌍 المنتخبات المبرمجة الجاهزة للتحدي: المغرب، السعودية، مصر، الأرجنتين، فرنسا، البرازيل!` });
+});
+
+client.login(process.env.TOKEN);
