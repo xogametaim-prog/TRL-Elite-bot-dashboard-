@@ -1,15 +1,13 @@
-const { Client, GatewayIntentBits, PermissionsBitField, ChannelType } = require('discord.js');
+const { Client, GatewayIntentBits, PermissionsBitField, ChannelType, REST, Routes, SlashCommandBuilder } = require('discord.js');
 const http = require('http');
 
+// السيرفر الوهمي عشان ريندر
 const server = http.createServer((req, res) => {
     res.writeHead(200, { 'Content-Type': 'text/plain' });
-    res.end('Bot is running successfully!');
+    res.end('Cloner Bot is running!');
 });
-
 const PORT = process.env.PORT || 3000;
-server.listen(PORT, () => {
-    console.log(`[Render Trick] Dummy server is listening on port ${PORT}`);
-});
+server.listen(PORT);
 
 const client = new Client({ 
     intents: [
@@ -21,151 +19,153 @@ const client = new Client({
     ] 
 });
 
-const PREFIX = '.'; 
-const OWNER_ID = '1515394889855275281'; // 🔒 قفل الأمان الخاص بك
+const OWNER_ID = '1515394889855275281'; // 🔒 قفل الأمان حقك
 
-client.on('ready', () => {
-    console.log(`تم تشغيل البوت بنجاح باسم: ${client.user.tag}`);
+// 🛠️ 1. تعريف أمر السلاش وتجهيز الخيارات (IDs السيرفرات)
+const commands = [
+    new SlashCommandBuilder()
+        .setName('clone')
+        .setDescription('نسخ الرومات، الرتب، والإيموجيات من سيرفر إلى سيرفر آخر')
+        .addStringOption(option => 
+            option.setName('source')
+                .setDescription('ضع ID السيرفر القديم (المصدر)')
+                .setRequired(true))
+        .addStringOption(option => 
+            option.setName('target')
+                .setDescription('ضع ID السيرفر الجديد (الهدف) - اترك فارغاً للسيرفر الحالي')
+                .setRequired(false))
+].map(command => command.toJSON());
+
+// 🚀 2. تسجيل أمر السلاش تلقائياً في الديسكورد عند التشغيل
+client.on('ready', async () => {
+    console.log(`تم تشغيل بوت النسخ بنجاح: ${client.user.tag}`);
+    
+    const rest = new REST({ version: '10' }).setToken(process.env.TOKEN);
+    try {
+        console.log('جاري تسجيل أوامر السلاش...');
+        await rest.put(
+            Routes.applicationCommands(client.user.id),
+            { body: commands },
+        );
+        console.log('تم تسجيل أمر /clone بنجاح وجاهز للاستخدام!');
+    } catch (error) {
+        console.error('خطأ في تسجيل الأوامر:', error);
+    }
 });
 
-client.on('messageCreate', async (message) => {
-    if (!message.content.startsWith(PREFIX) || message.author.bot) return;
-    if (message.author.id !== OWNER_ID) return; 
+// ⚡ 3. استقبال وتنفيذ أمر السلاش
+client.on('interactionCreate', async interaction => {
+    if (!interaction.isChatInputCommand()) return;
+    if (interaction.user.id !== OWNER_ID) {
+        return interaction.reply({ content: '❌ هذا الأمر مخصص لصاحب البوت السرّي فقط!', ephemeral: true });
+    }
 
-    const args = message.content.slice(PREFIX.length).trim().split(/ +/);
-    const command = args[0].toLowerCase();
+    const { commandName, options } = interaction;
 
-    // 1️⃣ أمر التبنيد الجماعي: .banall 50
-    if (command === 'banall') {
-        const count = parseInt(args[1]);
-        if (isNaN(count) || count <= 0) return;
-        try { await message.delete(); } catch (err) {}
+    if (commandName === 'clone') {
+        const sourceId = options.getString('source');
+        const targetId = options.getString('target') || interaction.guildId;
+
+        // جلب السيرفرات والتأكد أن البوت موجود فيها
+        const sourceGuild = client.guilds.cache.get(sourceId);
+        const targetGuild = client.guilds.cache.get(targetId);
+
+        if (!sourceGuild || !targetGuild) {
+            return interaction.reply({ content: '❌ لم أستطع العثور على السيرفرات. تأكد أنني موجود في السيرفرين ومضاف كـ Administrator!', ephemeral: true });
+        }
+
+        // الرد الأولي عشان الديسكورد ما يعطي Timeout (الأمر ياخذ وقت)
+        await interaction.reply({ content: '⏳ جاري بدء عملية النسخ الشاملة... انتظر ثواني والتفت لسيرفرك الجديد وهو يعمر!', ephemeral: true });
+
         try {
-            const members = await message.guild.members.fetch();
-            const targets = members.filter(m => !m.user.bot && m.roles.cache.size <= 1).first(count);
-            for (const member of targets) {
+            // === [ أولاً: نسخ الرتب Roles ] ===
+            const sourceRoles = await sourceGuild.roles.fetch();
+            // ترتيب الرتب عشان تنزل صح
+            const sortedRoles = sourceRoles.sort((a, b) => a.position - b.position);
+            
+            for (const [id, role] of sortedRoles) {
+                if (role.managed || role.id === sourceGuild.id) continue; // تخطي رتب البوتات ورتبة @everyone
+                
+                // التأكد إذا الرتبة موجودة مسبقاً بنفس الاسم عشان ما يكررها
+                const existingRole = targetGuild.roles.cache.find(r => r.name === role.name);
+                if (!existingRole) {
+                    try {
+                        await targetGuild.roles.create({
+                            name: role.name,
+                            color: role.color,
+                            hoist: role.hoist,
+                            permissions: role.permissions,
+                            mentionable: role.mentionable
+                        });
+                        await new Promise(resolve => setTimeout(resolve, 800));
+                    } catch (e) {}
+                }
+            }
+
+            // === [ ثانياً: نسخ الفئات والرومات Channels & Categories ] ===
+            const sourceChannels = await sourceGuild.channels.fetch();
+            
+            // 1. نسخ الفئات (Categories) أولاً وتخزين الـ IDs الجديدة لها
+            const categoriesMap = new Map();
+            const categories = sourceChannels.filter(c => c.type === ChannelType.GuildCategory);
+            
+            for (const [id, category] of categories) {
                 try {
-                    await member.ban({ reason: 'تنظيف الحسابات' });
-                    await new Promise(resolve => setTimeout(resolve, 20000)); 
-                } catch (err) {}
-            }
-        } catch (error) {}
-    }
-
-    // 2️⃣ أمر حذف كاتيجوري مع روماتها: .delcat ID
-    if (command === 'delcat') {
-        const categoryId = args[1];
-        if (!categoryId) return;
-        try { await message.delete(); } catch (err) {}
-        try {
-            const category = message.guild.channels.cache.get(categoryId);
-            if (!category || category.type !== ChannelType.GuildCategory) return;
-            for (const [id, channel] of category.children.cache) {
-                try { await channel.delete(); await new Promise(resolve => setTimeout(resolve, 1000)); } catch (err) {}
-            }
-            await category.delete();
-        } catch (error) {}
-    }
-
-    // 3️⃣ أمر تصفير الرومات بالكامل: .nukechannels
-    if (command === 'nukechannels') {
-        try { await message.delete(); } catch (err) {}
-        try {
-            const channels = await message.guild.channels.fetch();
-            for (const [id, channel] of channels) {
-                try { await channel.delete(); await new Promise(resolve => setTimeout(resolve, 1000)); } catch (err) {}
-            }
-        } catch (error) {}
-    }
-
-    // 4️⃣ أمر إنشاء رومات متكررة: .makechannels 30 name
-    if (command === 'makechannels') {
-        const count = parseInt(args[1]);
-        const channelName = args.slice(2).join('-');
-        if (isNaN(count) || count <= 0 || !channelName) return;
-        const finalCount = count > 50 ? 50 : count;
-        try { await message.delete(); } catch (err) {}
-        try {
-            for (let i = 0; i < finalCount; i++) {
-                try { await message.guild.channels.create({ name: channelName, type: ChannelType.GuildText }); await new Promise(resolve => setTimeout(resolve, 1000)); } catch (err) {}
-            }
-        } catch (error) {}
-    }
-
-    // 🔥 [الأمر الجديد]: إنشاء فئات (Categories) متكررة بنفس الاسم
-    if (command === 'makecategories') {
-        const count = parseInt(args[1]); // العدد المطلوبة
-        const categoryName = args.slice(2).join(' '); // اسم الفئة
-
-        if (isNaN(count) || count <= 0 || !categoryName) return;
-        const finalCount = count > 50 ? 50 : count; // حد أمان لأقصى عدد
-
-        try { await message.delete(); } catch (err) {}
-        try {
-            for (let i = 0; i < finalCount; i++) {
-                try {
-                    await message.guild.channels.create({
-                        name: categoryName,
-                        type: ChannelType.GuildCategory // تحديد النوع كـ فئة وليس روم
+                    const newCategory = await targetGuild.channels.create({
+                        name: category.name,
+                        type: ChannelType.GuildCategory,
+                        permissionOverwrites: category.permissionOverwrites.cache.map(p => ({
+                            id: targetGuild.roles.cache.find(r => r.name === sourceGuild.roles.cache.get(p.id)?.name)?.id || targetGuild.id,
+                            allow: p.allow,
+                            deny: p.deny,
+                            type: p.type
+                        }))
                     });
-                    await new Promise(resolve => setTimeout(resolve, 1000)); // ديلاي للأمان
-                } catch (err) {}
+                    categoriesMap.set(category.id, newCategory.id);
+                    await new Promise(resolve => setTimeout(resolve, 800));
+                } catch (e) {}
             }
-        } catch (error) {}
-    }
 
-    // 5️⃣ أمر تصفير الرتب: .nukeroles
-    if (command === 'nukeroles') {
-        try { await message.delete(); } catch (err) {}
-        try {
-            const roles = await message.guild.roles.fetch();
-            for (const [id, role] of roles) {
-                if (role.managed || role.id === message.guild.id || role.id === client.user.id) continue;
-                try { await role.delete(); await new Promise(resolve => setTimeout(resolve, 1000)); } catch (err) {}
+            // 2. نسخ الرومات (الكتابية والصوتية) وربطها بالفئات الجديدة
+            const textAndVoiceChannels = sourceChannels.filter(c => c.type === ChannelType.GuildText || c.type === ChannelType.GuildVoice);
+            
+            for (const [id, channel] of textAndVoiceChannels) {
+                try {
+                    await targetGuild.channels.create({
+                        name: channel.name,
+                        type: channel.type,
+                        topic: channel.topic,
+                        parent: channel.parentId ? categoriesMap.get(channel.parentId) : null,
+                        permissionOverwrites: channel.permissionOverwrites.cache.map(p => ({
+                            id: targetGuild.roles.cache.find(r => r.name === sourceGuild.roles.cache.get(p.id)?.name)?.id || targetGuild.id,
+                            allow: p.allow,
+                            deny: p.deny,
+                            type: p.type
+                        }))
+                    });
+                    await new Promise(resolve => setTimeout(resolve, 800));
+                } catch (e) {}
             }
-        } catch (error) {}
-    }
 
-    // 6️⃣ أمر مسح الشات: .clear 100
-    if (command === 'clear') {
-        const amount = parseInt(args[1]);
-        if (isNaN(amount) || amount <= 0) return;
-        try { await message.delete(); } catch (err) {}
-        try { await message.channel.bulkDelete(amount > 100 ? 100 : amount, true); } catch (error) {}
-    }
-
-    // 7️⃣ أمر حذف جميع الإيموجيات: .nukeemojis
-    if (command === 'nukeemojis') {
-        try { await message.delete(); } catch (err) {}
-        try {
-            const emojis = await message.guild.emojis.fetch();
-            for (const [id, emoji] of emojis) {
-                try { await emoji.delete(); await new Promise(resolve => setTimeout(resolve, 500)); } catch (err) {}
+            // === [ ثالثاً: نسخ الإيموجيات Emojis ] ===
+            const sourceEmojis = await sourceGuild.emojis.fetch();
+            for (const [id, emoji] of sourceEmojis) {
+                const existingEmoji = targetGuild.emojis.cache.find(e => e.name === emoji.name);
+                if (!existingEmoji) {
+                    try {
+                        await targetGuild.emojis.create({ attachment: emoji.url, name: emoji.name });
+                        await new Promise(resolve => setTimeout(resolve, 500));
+                    } catch (e) {}
+                }
             }
-        } catch (error) {}
-    }
 
-    // 8️⃣ أمر حذف جميع الستيكرات: .nukestickers
-    if (command === 'nukestickers') {
-        try { await message.delete(); } catch (err) {}
-        try {
-            const stickers = await message.guild.stickers.fetch();
-            for (const [id, sticker] of stickers) {
-                try { await sticker.delete(); await new Promise(resolve => setTimeout(resolve, 500)); } catch (err) {}
-            }
-        } catch (error) {}
-    }
+            // تعديل الرسالة بعد الانتهاء
+            await interaction.followUp({ content: '✅ مبروك يا زعيم! تم نسخ كل شيء بنجاح (رتب، رومات، فئات، إيموجيات). سيرفرك الجديد صار نسخة طبق الأصل!', ephemeral: true });
 
-    // 9️⃣ أمر طرد جميع البوتات الخارجية: .nukebots
-    if (command === 'nukebots') {
-        try { await message.delete(); } catch (err) {}
-        try {
-            const members = await message.guild.members.fetch();
-            const bots = members.filter(m => m.user.bot && m.user.id !== client.user.id);
-            for (const [id, bot] of bots) {
-                try { await bot.kick('تصفير السيرفر'); await new Promise(resolve => setTimeout(resolve, 1000)); } catch (err) {}
-            }
-        } catch (error) {}
+        } catch (error) {
+            console.error(error);
+            await interaction.followUp({ content: '❌ حدثت مشكلة أثناء النسخ، تأكد من صلاحيات البوت وترتيب رتبته.', ephemeral: true });
+        }
     }
 });
 
