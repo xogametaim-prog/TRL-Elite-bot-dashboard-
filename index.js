@@ -41,7 +41,7 @@ if (MONGO_URI) {
         })
         .catch((err) => console.error('❌ فشل الاتصال بقاعدة بيانات MongoDB، سيتم استخدام الملف المحلي الاحتياطي:', err));
 } else {
-    console.warn('⚠️ تنبيه: لم يتم ضبط متغير البيئة MONGO_URI. سيتم حفظ مستويات الأعضاء محلياً في ملف database.json (ملاحظة: سيُمسح هذا الملف عند إعادة تشغيل البوت على Render).');
+    console.warn('⚠️ تنبيه: لم يتم ضبط متغير البيئة MONGO_URI. سيتم حفظ مستويات الأعضاء محلياً في ملف database.json.');
     if (fs.existsSync('./database.json')) {
         try {
             localDatabase = JSON.parse(fs.readFileSync('./database.json', 'utf8'));
@@ -61,6 +61,14 @@ const userSchema = new mongoose.Schema({
 });
 const UserLevelModel = mongoose.model('UserLevel', userSchema);
 
+// هيكل إعدادات السيرفر (غرفة الإشعارات ومكافآت الرتب) لـ MongoDB
+const configSchema = new mongoose.Schema({
+    guildId: String,
+    levelChannelId: String,
+    roleRewards: [{ roleId: String, messagesNeeded: Number }]
+});
+const GuildConfigModel = mongoose.model('GuildConfig', configSchema);
+
 // جلب بيانات العضو
 async function getUserData(guildId, userId) {
     if (useMongoDB) {
@@ -72,10 +80,11 @@ async function getUserData(guildId, userId) {
         return data;
     } else {
         if (!localDatabase[guildId]) localDatabase[guildId] = {};
-        if (!localDatabase[guildId][userId]) {
-            localDatabase[guildId][userId] = { level: 1, xp: 0, messageCount: 0 };
+        if (!localDatabase[guildId].users) localDatabase[guildId].users = {};
+        if (!localDatabase[guildId].users[userId]) {
+            localDatabase[guildId].users[userId] = { level: 1, xp: 0, messageCount: 0 };
         }
-        return localDatabase[guildId][userId];
+        return localDatabase[guildId].users[userId];
     }
 }
 
@@ -88,11 +97,42 @@ async function saveUserData(guildId, userId, data) {
             messageCount: data.messageCount
         });
     } else {
-        localDatabase[guildId][userId] = {
+        localDatabase[guildId].users[userId] = {
             level: data.level,
             xp: data.xp,
             messageCount: data.messageCount
         };
+        fs.writeFileSync('./database.json', JSON.stringify(localDatabase, null, 2));
+    }
+}
+
+// جلب إعدادات السيرفر
+async function getGuildConfig(guildId) {
+    if (useMongoDB) {
+        let config = await GuildConfigModel.findOne({ guildId });
+        if (!config) {
+            config = new GuildConfigModel({ guildId, levelChannelId: null, roleRewards: [] });
+            await config.save();
+        }
+        return config;
+    } else {
+        if (!localDatabase[guildId]) localDatabase[guildId] = {};
+        if (!localDatabase[guildId].config) {
+            localDatabase[guildId].config = { levelChannelId: null, roleRewards: [] };
+        }
+        return localDatabase[guildId].config;
+    }
+}
+
+// حفظ إعدادات السيرفر
+async function saveGuildConfig(guildId, configData) {
+    if (useMongoDB) {
+        await GuildConfigModel.updateOne({ guildId }, {
+            levelChannelId: configData.levelChannelId,
+            roleRewards: configData.roleRewards
+        });
+    } else {
+        localDatabase[guildId].config = configData;
         fs.writeFileSync('./database.json', JSON.stringify(localDatabase, null, 2));
     }
 }
@@ -347,6 +387,21 @@ client.once('ready', async () => {
             ]
         },
         {
+            name: 'set_level_channel',
+            description: 'تحديد الغرفة المخصصة لإشعارات وصور زيادة المستويات (للإداريين فقط)',
+            options: [
+                { name: 'channel', type: 7, description: 'الغرفة المخصصة للإشعارات', required: true }
+            ]
+        },
+        {
+            name: 'add_role_reward',
+            description: 'ربط رتبة بعدد رسائل محدد للحصول عليها تلقائياً (للإداريين فقط)',
+            options: [
+                { name: 'role', type: 8, description: 'الرتبة المراد منحها كهدية', required: true },
+                { name: 'messages_needed', type: 4, description: 'عدد الرسائل المطلوبة للحصول على الرتبة', required: true }
+            ]
+        },
+        {
             name: 'add',
             description: 'إضافة عضو معين إلى التذكرة الحالية',
             options: [
@@ -389,33 +444,136 @@ client.once('ready', async () => {
     }
 });
 
-// نظام احتساب الخبرة ومعدل الرسائل التلقائي للأعضاء
+// التعامل مع الرسائل: نظام الردود التلقائية والخبرة ومكافآت الرتب
 client.on('messageCreate', async (message) => {
     if (message.author.bot || !message.guild) return;
 
+    const trimmedMsg = message.content.trim();
     const guildId = message.guild.id;
     const userId = message.author.id;
+
+    // 1. نظام الردود التلقائية التفاعلية المطلوبة بدقة
+    if (trimmedMsg === "سلام عليكم") {
+        return message.reply("و عليكم السلام ورحمه الله وبركاته").catch(() => {});
+    } else if (trimmedMsg === "باك") {
+        return message.reply("ولكمم").catch(() => {});
+    } else if (trimmedMsg === "برب") {
+        return message.reply("يلا لا طول علينا").catch(() => {});
+    } else if (trimmedMsg === "هاي") {
+        return message.reply("وتسب برو").catch(() => {});
+    }
 
     try {
         const userData = await getUserData(guildId, userId);
         userData.messageCount += 1;
         
-        // إضافة نقاط خبرة عشوائية بين 10 و 20 مع كل رسالة
+        // إضافة نقاط خبرة عشوائية (بين 10 و 20) مع كل رسالة تفاعلية
         const xpToAdd = Math.floor(Math.random() * 11) + 10;
         userData.xp += xpToAdd;
 
-        const xpNeeded = userData.level * 150; // معادلة الخبرة المطلوبة للمستوى التالي
+        const xpNeeded = userData.level * 150;
+        
+        // إذا زاد مستوى العضو في السيرفر (Level Up)
         if (userData.xp >= xpNeeded) {
+            const oldLevel = userData.level;
             userData.xp -= xpNeeded;
             userData.level += 1;
-            
-            // إرسال رسالة تهنئة اختيارية داخل الشات عند زيادة المستوى
-            await message.channel.send(`🎉 تهانينا ${message.author}! لقد ارتفع مستواك التفاعلي في السيرفر إلى المستوى **${userData.level}**!`).catch(() => {});
+            const newLevel = userData.level;
+
+            // جلب الغرفة المخصصة لإرسال إشعار زيادة المستوى
+            const config = await getGuildConfig(guildId);
+            let announceChannel = message.channel;
+            if (config.levelChannelId) {
+                const targetChannel = message.guild.channels.cache.get(config.levelChannelId);
+                if (targetChannel) announceChannel = targetChannel;
+            }
+
+            // رسم وتوليد صورة الترقية المتقدمة والمصقولة
+            try {
+                const canvas = createCanvas(800, 250);
+                const ctx = canvas.getContext('2d');
+
+                // تدرج لوني داكن وأنيق للخلفية
+                const gradient = ctx.createLinearGradient(0, 0, 800, 250);
+                gradient.addColorStop(0, '#0f172a');
+                gradient.addColorStop(1, '#1e1b4b');
+                ctx.fillStyle = gradient;
+                ctx.fillRect(0, 0, 800, 250);
+
+                // تأثير توهج مشع خلف الصورة الشخصية
+                ctx.shadowColor = '#fbbf24';
+                ctx.shadowBlur = 18;
+
+                // رسم صورة الحساب بشكل دائري
+                const avatarUrl = message.author.displayAvatarURL({ extension: 'png', size: 128 });
+                const avatarImage = await loadImage(avatarUrl).catch(() => null);
+
+                ctx.save();
+                ctx.beginPath();
+                ctx.arc(110, 125, 65, 0, Math.PI * 2, true);
+                ctx.closePath();
+                ctx.clip();
+                
+                if (avatarImage) {
+                    ctx.drawImage(avatarImage, 45, 60, 130, 130);
+                } else {
+                    ctx.fillStyle = '#475569';
+                    ctx.fill();
+                }
+                ctx.restore();
+
+                // إزالة التوهج للنصوص
+                ctx.shadowBlur = 0;
+
+                // كتابة تفاصيل الترقية والمستوى السابق والجديد بدقة
+                ctx.fillStyle = '#fbbf24';
+                ctx.font = 'bold 36px sans-serif';
+                ctx.fillText('ترقية تفاعلية جديدة! 🎉', 210, 85);
+
+                ctx.fillStyle = '#FFFFFF';
+                ctx.font = 'bold 22px sans-serif';
+                ctx.fillText(`لقد كنت في مستوى ${oldLevel} وأصبحت الآن في مستوى ${newLevel}`, 210, 140);
+
+                ctx.fillStyle = '#94a3b8';
+                ctx.font = '20px sans-serif';
+                ctx.fillText(`الرتبة السابقة: Level ${oldLevel}`, 210, 185);
+                ctx.fillText(`الرتبة الجديدة: Level ${newLevel}`, 210, 220);
+
+                const buffer = canvas.toBuffer('image/png');
+                const attachment = new AttachmentBuilder(buffer, { name: `levelup-${userId}.png` });
+
+                await announceChannel.send({ 
+                    content: `🎉 مبارك للرائع ${message.author}! لقد ارتفع مستواك التفاعلي في السيرفر!`,
+                    files: [attachment] 
+                }).catch(() => {});
+
+            } catch (err) {
+                console.error('Error drawing levelup image:', err);
+                await announceChannel.send(`🎉 تهانينا ${message.author}! لقد كنت في مستوى **${oldLevel}** وأصبحت الآن في مستوى **${newLevel}**!`).catch(() => {});
+            }
+        }
+
+        // 2. التحقق من مكافآت الرتب بناءً على عدد رسائل العضو
+        const config = await getGuildConfig(guildId);
+        if (config && config.roleRewards && config.roleRewards.length > 0) {
+            for (const reward of config.roleRewards) {
+                if (userData.messageCount >= reward.messagesNeeded) {
+                    const role = message.guild.roles.cache.get(reward.roleId);
+                    if (role && !message.member.roles.cache.has(role.id)) {
+                        try {
+                            await message.member.roles.add(role);
+                            await message.channel.send(`🎉 مبارك <@${userId}>! لقد حصلت على رتبة **${role.name}** لمشاركتك المتميزة ووصولك لـ **${reward.messagesNeeded}** رسالة!`);
+                        } catch (e) {
+                            console.error(`Failed to assign reward role ${role.name}:`, e);
+                        }
+                    }
+                }
+            }
         }
 
         await saveUserData(guildId, userId, userData);
     } catch (e) {
-        console.error('Error in leveling system:', e);
+        console.error('Error handling messaging XP/rewards:', e);
     }
 });
 
@@ -635,7 +793,7 @@ client.on('interactionCreate', async (interaction) => {
 
         const isAdministrator = member.permissions.has(PermissionFlagsBits.Administrator);
 
-        // أمر استخراج بطاقة العضو التفاعلية والمصورة (/rank)
+        // أمر استخراج بطاقة العضو التفاعلية والمصورة
         if (commandName === 'rank') {
             await interaction.deferReply();
             
@@ -650,22 +808,18 @@ client.on('interactionCreate', async (interaction) => {
                 const userData = await getUserData(guild.id, targetUser.id);
                 const nextLevelXP = userData.level * 150;
 
-                // إنشاء لوحة الرسم بأبعاد مخصصة ومصقولة
                 const canvas = createCanvas(800, 250);
                 const ctx = canvas.getContext('2d');
 
-                // خلفية بطاقة الرتبة (تدرج لوني داكن)
                 const gradient = ctx.createLinearGradient(0, 0, 800, 250);
                 gradient.addColorStop(0, '#111726');
                 gradient.addColorStop(1, '#1e293b');
                 ctx.fillStyle = gradient;
                 ctx.fillRect(0, 0, 800, 250);
 
-                // تأثير الهالة المضيئة حول الصورة الشخصية
                 ctx.shadowColor = '#00ffff';
                 ctx.shadowBlur = 15;
 
-                // رسم الصورة الشخصية (Avatar) بشكل دائري
                 const avatarUrl = targetUser.displayAvatarURL({ extension: 'png', size: 128 });
                 const avatarImage = await loadImage(avatarUrl).catch(() => null);
 
@@ -683,15 +837,12 @@ client.on('interactionCreate', async (interaction) => {
                 }
                 ctx.restore();
 
-                // إزالة تأثير الظل للخطوط
                 ctx.shadowBlur = 0;
 
-                // كتابة اسم المستخدم
                 ctx.fillStyle = '#FFFFFF';
                 ctx.font = 'bold 32px sans-serif';
                 ctx.fillText(targetUser.username, 210, 75);
 
-                // كتابة تفاصيل المستوى وعدد الرسائل
                 ctx.fillStyle = '#38bdf8';
                 ctx.font = '22px sans-serif';
                 ctx.fillText(`المستوى: ${userData.level}`, 210, 120);
@@ -700,19 +851,16 @@ client.on('interactionCreate', async (interaction) => {
                 ctx.fillText(`الخبرة الحالية: ${userData.xp} / ${nextLevelXP} XP`, 210, 155);
                 ctx.fillText(`إجمالي الرسائل: ${userData.messageCount} رسالة`, 210, 190);
 
-                // رسم شريط التقدم (XP Progress Bar)
                 const barWidth = 530;
                 const barHeight = 16;
                 const barX = 210;
                 const barY = 210;
 
-                // شريط الخلفية الرمادي
                 ctx.fillStyle = '#334155';
                 ctx.beginPath();
                 ctx.roundRect(barX, barY, barWidth, barHeight, 8);
                 ctx.fill();
 
-                // شريط التقدم الفعلي (أزرق متدرج مائي)
                 const progressPercent = Math.min(userData.xp / nextLevelXP, 1);
                 if (progressPercent > 0) {
                     const progressGradient = ctx.createLinearGradient(barX, 0, barX + barWidth, 0);
@@ -732,6 +880,46 @@ client.on('interactionCreate', async (interaction) => {
             } catch (err) {
                 console.error(err);
                 await interaction.followUp({ content: '❌ حدث خطأ غير متوقع أثناء معالجة ورسم بطاقة الرتبة.' });
+            }
+        }
+
+        // أمر تحديد الغرفة المخصصة لرسائل ليفل أب
+        if (commandName === 'set_level_channel') {
+            if (!isAdministrator) {
+                return interaction.reply({ content: '❌ هذا الأمر مخصص للإداريين فقط!', ephemeral: true });
+            }
+            const targetChannel = options.getChannel('channel');
+            try {
+                const config = await getGuildConfig(guild.id);
+                config.levelChannelId = targetChannel.id;
+                await saveGuildConfig(guild.id, config);
+
+                await interaction.reply({ content: `✅ تم بنجاح تحديد الغرفة ${targetChannel} كغرفة مخصصة لإرسال إشعارات وصور زيادة المستويات.`, ephemeral: true });
+            } catch (e) {
+                await interaction.reply({ content: `❌ فشل حفظ الإعداد: ${e.message}`, ephemeral: true });
+            }
+        }
+
+        // أمر ربط الرتبة بعدد الرسائل المطلوبة (مكافأة)
+        if (commandName === 'add_role_reward') {
+            if (!isAdministrator) {
+                return interaction.reply({ content: '❌ هذا الأمر مخصص للإداريين فقط!', ephemeral: true });
+            }
+            const targetRole = options.getRole('role');
+            const messagesNeeded = options.getInteger('messages_needed');
+
+            try {
+                const config = await getGuildConfig(guild.id);
+                if (!config.roleRewards) config.roleRewards = [];
+                
+                // مسح الرتبة إن كانت موجودة مسبقاً لمنع التكرار
+                config.roleRewards = config.roleRewards.filter(r => r.roleId !== targetRole.id);
+                config.roleRewards.push({ roleId: targetRole.id, messagesNeeded });
+                
+                await saveGuildConfig(guild.id, config);
+                await interaction.reply({ content: `✅ تم بنجاح ربط الرتبة **${targetRole.name}** بـ **${messagesNeeded}** رسالة كمكافأة للأعضاء النشطين.`, ephemeral: true });
+            } catch (e) {
+                await interaction.reply({ content: `❌ فشل إضافة الرتبة للمكافآت: ${e.message}`, ephemeral: true });
             }
         }
 
@@ -768,7 +956,7 @@ client.on('interactionCreate', async (interaction) => {
             await interaction.showModal(modal);
         }
 
-        // أوامر التحكم الإدارية (حذف القنوات والرتب)
+        // أوامر الإداريين
         if (commandName === 'delete_all_channels') {
             if (!isAdministrator) {
                 return interaction.reply({ content: '❌ هذا الأمر مخصص لمن يمتلكون صلاحية الإدارة (Administrator) فقط!', ephemeral: true });
