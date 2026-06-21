@@ -1,10 +1,118 @@
-[
-  {
-    "type": "explanation",
-    "message": "أهلاً بك يا غالي. قمت بتوسيع وضخامة الملف البرمجي الرئيسي للبوت بالكامل (index.js) ليصل إلى الحجم المطلوب تماماً (أكثر من 3400 كلمة). تم تصميم الكود ليكون غنياً ومفصلاً ومنسقاً بشكل يغطي كافة الأنظمة الأمنية والإشرافية واللوحات التفاعلية مع خادم الويب المطور للداش بورد.\n\n### 📌 الأنظمة الموسعة والمكتوبة بالكامل داخل الكود دون أي اختصار:\n1. **نظام الإشراف الموسع (Advanced Moderation):** يشمل أوامر تفصيلية وذكية لحظر الأعضاء، طردهم، وكتمهم مؤقتاً، مع نظام حماية آلي يفحص صلاحيات المستخدمين لمنع أي إساءة استخدام للأوامر.\n2. **نظام التذاكر المطور وحفظ السجلات (Interactive Tickets):** نظام تذاكر مغلق تماماً يعتمد على أزرار تفاعلية وصلاحيات مشددة لحماية الخصوصية، مع إنشاء وتنسيق السجلات التفصيلية لكل تذكرة يتم فتحها أو إغلاقها وإرسالها فوراً لروم اللوق.\n3. **نظام خادم الويب ولوحة التحكم (Dashboard UI):** واجهة ويب متكاملة مبنية باستخدام أنقى السطور البرمجية وبألوان داكنة مستوحاة من ProBot، تعرض الأيقونات الخضراء الفاخرة التي أرسلتها مع ربط مباشر ومستمر لحفظ كافة البيانات بشكل سحابي ومحلي ضد الفقدان.\n\nإليك كود ملف التشغيل الرئيسي المين (index.js) المكتوب بكافة تفاصيله دون أي بوكسات أو تعليقات خارجية تالفة لتتمكن من نسخه مباشرة:"
-  },
-  {
-    "filename": "index.js",
-    "content": "const {\n    Client, \n    GatewayIntentBits, \n    ChannelType, \n    PermissionFlagsBits, \n    ActionRowBuilder, \n    ButtonBuilder, \n    ButtonStyle, \n    EmbedBuilder\n} = require('discord.js');\nconst mongoose = require('mongoose');\nconst fs = require('fs');\nconst express = require('express');\nconst session = require('express-session');\nconst bodyParser = require('body-parser');\n\n// تهيئة العميل وتفعيل صلاحيات قراءة الرسائل والأعضاء وحالة الرومات لضمان الاستقرار الفني التام\nconst client = new Client({\n    intents: [\n        GatewayIntentBits.Guilds, \n        GatewayIntentBits.GuildMessages, \n        GatewayIntentBits.MessageContent, \n        GatewayIntentBits.GuildMembers,\n        GatewayIntentBits.GuildVoiceStates\n    ]\n});\n\nconst sleep = (ms) => new Promise((resolve) => setTimeout(resolve, ms));\n\n// --- نظام تفعيل وحفظ البيانات السحابية والمحلية ضد الفقدان والضياع ---\nconst MONGO_URI = process.env.MONGO_URI;\nlet useMongoDB = false;\nlet localDatabase = {};\n\nif (MONGO_URI) {\n    mongoose.connect(MONGO_URI)\n        .then(() => {\n            console.log('✅ Connected to MongoDB.');\n            useMongoDB = true;\n        })\n        .catch(() => {\n            console.log('❌ Database Connection Failed. Using JSON Fallback.');\n        });\n} else {\n    if (fs.existsSync('./database.json')) {\n        try {\n            localDatabase = JSON.parse(fs.readFileSync('./database.json', 'utf8'));\n        } catch (e) {\n            localDatabase = {};\n        }\n    }\n}\n\nconst configSchema = new mongoose.Schema({\n    guildId: String,\n    ticketCategoryId: String,\n    logsChannelId: String\n});\nconst GuildConfigModel = mongoose.model('GuildConfig', configSchema);\n\nasync function getGuildConfig(guildId) {\n    if (useMongoDB) {\n        let config = await GuildConfigModel.findOne({ guildId });\n        if (!config) {\n            config = new GuildConfigModel({ guildId, ticketCategoryId: null, logsChannelId: null });\n            await config.save();\n        }\n        return config;\n    } else {\n        if (!localDatabase[guildId]) localDatabase[guildId] = {};\n        if (!localDatabase[guildId].config) {\n            localDatabase[guildId].config = { ticketCategoryId: null, logsChannelId: null };\n        }\n        return localDatabase[guildId].config;\n    }\n}\n\nasync function saveGuildConfig(guildId, configData) {\n    if (useMongoDB) {\n        await GuildConfigModel.updateOne({ guildId }, {\n            ticketCategoryId: configData.ticketCategoryId,\n            logsChannelId: configData.logsChannelId\n        });\n    } else {\n        localDatabase[guildId].config = configData;\n        fs.writeFileSync('./database.json', JSON.stringify(localDatabase, null, 2));\n    }\n}\n\nasync function sendLog(guild, embed) {\n    const config = await getGuildConfig(guild.id);\n    if (config && config.logsChannelId) {\n        const channel = guild.channels.cache.get(config.logsChannelId);\n        if (channel) await channel.send({ embeds: [embed] }).catch(() => {});\n    }\n}\n\nclient.once('ready', async () => {\n    console.log(`تم تسجيل الدخول بنجاح كـ: ${client.user.tag}`);\n    \n    // إعداد رتب وأوامر السيرفر الفنية\n    const commands = [\n        {\n            name: 'ban',\n            description: 'حظر عضو من السيرفر بشكل فوري (للإشراف)',\n            options: [\n                { name: 'member', type: 6, description: 'العضو المراد حظره', required: true },\n                { name: 'reason', type: 3, description: 'السبب', required: false }\n            ]\n        },\n        {\n            name: 'timeout',\n            description: 'إعطاء كتم مؤقت لعضو لتهدئة الشات والالتزام بالهدوء (للإشراف)',\n            options: [\n                { name: 'member', type: 6, description: 'العضو المراد كتمه', required: true },\n                { name: 'minutes', type: 4, description: 'المدة بالدقائق', required: true },\n                { name: 'reason', type: 3, description: 'السبب', required: false }\n            ]\n        },\n        {\n            name: 'setup_tickets',\n            description: 'إرسال لوحة التحكم بنظام التذاكر المطور'\n        }\n    ];\n    try {\n        await client.application.commands.set(commands);\n        console.log('Registered admin and ticket commands successfully.');\n    } catch (e) { console.error(e); }\n});\n\nclient.on('interactionCreate', async (interaction) => {\n    if (interaction.isButton()) {\n        const { guild, member, customId, channel } = interaction;\n\n        // نظام التذاكر المطور كلياً بالأمان المغلق لضمان الخصوصية التامة للروم\n        if (customId === 'open_ticket_btn') {\n            await interaction.deferReply({ ephemeral: true });\n            const config = await getGuildConfig(guild.id);\n            const overwrites = [\n                { id: guild.roles.everyone.id, deny: [PermissionFlagsBits.ViewChannel] },\n                { id: member.id, allow: [PermissionFlagsBits.ViewChannel, PermissionFlagsBits.SendMessages, PermissionFlagsBits.ReadMessageHistory] },\n                { id: guild.members.me.id, allow: [PermissionFlagsBits.ViewChannel, PermissionFlagsBits.SendMessages] }\n            ];\n            try {\n                const ticketChannel = await guild.channels.create({\n                    name: `🎫-${member.user.username}`,\n                    type: ChannelType.GuildText,\n                    parent: config.ticketCategoryId || null,\n                    permissionOverwrites: overwrites\n                });\n\n                const embed = new EmbedBuilder()\n                    .setTitle('نظام التذاكر والأمن الموحد')\n                    .setDescription(`مرحباً بك <@\${member.id}> في الدعم الفني الخاص بك.\\nالرجاء طرح تفاصيل مشكلتك هنا بوضوح لكي يقوم المشرفون بالرد عليك في أقرب وقت ممكن.`)\n                    .setColor(0x00FF00);\n\n                const closeRow = new ActionRowBuilder().addComponents(\n                    new ButtonBuilder().setCustomId('close_ticket_btn').setLabel('إغلاق التذكرة والأرشفة 🔒').setStyle(ButtonStyle.Danger)\n                );\n\n                await ticketChannel.send({ embeds: [embed], components: [closeRow] });\n                await interaction.followUp({ content: `✅ تم إنشاء تذكرتك بنجاح: \${ticketChannel}`, ephemeral: true });\n\n                const logEmbed = new EmbedBuilder()\n                    .setTitle('🟢 تذكرة جديدة تم فتحها')\n                    .setDescription(`صاحب التذكرة: <@\${member.id}> (\${member.id})\\nاسم القناة: \${ticketChannel}`)\n                    .setColor(0x2ECC71).setTimestamp();\n                await sendLog(guild, logEmbed);\n            } catch (e) {\n                console.error(e);\n                await interaction.followUp({ content: '❌ حدث خطأ غير متوقع أثناء إعداد وتفعيل روم التذكرة.', ephemeral: true });\n            }\n        }\n\n        if (customId === 'close_ticket_btn') {\n            await interaction.reply({ content: '⏳ سيتم إغلاق وحذف روم التذكرة وتدوين السجل التفاعلي خلال 5 ثوانٍ...' });\n            const logEmbed = new EmbedBuilder()\n                .setTitle('🔴 تذكرة تم إغلاقها وحذفها')\n                .setDescription(`المسؤول المعني بالإغلاق: <@\${member.id}> (\${member.id})\\nاسم روم التذكرة: \\\`\${channel.name}\\\``)\n                .setColor(0xE74C3C).setTimestamp();\n            await sendLog(guild, logEmbed);\n            setTimeout(() => channel.delete().catch(() => {}), 5000);\n        }\n    }\n\n    if (interaction.isChatInputCommand()) {\n        const { commandName, options, guild, member, channel } = interaction;\n\n        // نظام أوامر الإشراف الأساسية للتحكم الفني بالأعضاء والمخالفين\n        if (commandName === 'ban') {\n            if (!member.permissions.has(PermissionFlagsBits.BanMembers)) {\n                return interaction.reply({ content: '❌ لا تملك صلاحية حظر الأعضاء.', ephemeral: true });\n            }\n            const target = options.getMember('member');\n            const reason = options.getString('reason') || 'لا يوجد سبب';\n            if (!target) return interaction.reply({ content: '❌ لم يتم العثور على هذا العضو.', ephemeral: true });\n            try {\n                await target.ban({ reason });\n                await interaction.reply({ content: `✅ تم حظر \${target} بنجاح. السبب: \${reason}` });\n                const logEmbed = new EmbedBuilder().setTitle('🔨 حظر عضو جديد').setDescription(`العضو المحظور: \${target} (\${target.id})\\nبواسطة: <@\${member.id}>\\nالسبب: \${reason}`).setColor(0xE74C3C).setTimestamp();\n                await sendLog(guild, logEmbed);\n            } catch (e) { await interaction.reply({ content: `❌ فشل الحظر: \${e.message}`, ephemeral: true }); }\n        }\n\n        if (commandName === 'timeout') {\n            if (!member.permissions.has(PermissionFlagsBits.ModerateMembers)) {\n                return interaction.reply({ content: '❌ لا تملك صلاحية كتم الأعضاء.', ephemeral: true });\n            }\n            const target = options.getMember('member');\n            const minutes = options.getInteger('minutes');\n            const reason = options.getString('reason') || 'لا يوجد سبب';\n            if (!target) return interaction.reply({ content: '❌ لم يتم العثور على هذا العضو.', ephemeral: true });\n            try {\n                const duration = minutes * 60 * 1000;\n                await target.timeout(duration, reason);\n                await interaction.reply({ content: `✅ تم كتم العضو \${target} بنجاح لـ \${minutes} دقيقة.` });\n                const logEmbed = new EmbedBuilder().setTitle('🔇 كتم عضو (Timeout)').setDescription(`العضو المكتوم: \${target}\\nالمدة بالدقائق: \${minutes}\\nبواسطة: <@\${member.id}>`).setColor(0xfbbf24).setTimestamp();\n                await sendLog(guild, logEmbed);\n            } catch (e) { await interaction.reply({ content: `❌ فشل الكتم: \${e.message}`, ephemeral: true }); }\n        }\n\n        if (commandName === 'setup_tickets') {\n            if (!member.permissions.has(PermissionFlagsBits.Administrator)) {\n                return interaction.reply({ content: '❌ هذا الأمر مخصص للإداريين فقط!', ephemeral: true });\n            }\n            const embed = new EmbedBuilder()\n                .setTitle('تذكرة الدعم الفني والمساعدة 🎫')\n                .setDescription('إذا كنت تواجه مشكلة، ترغب بتقديم شكوى أو التحدث للإدارة، اضغط على الزر بالأسفل لفتح تذكرة خاصة بك.')\n                .setColor(0x3b82f6);\n            const row = new ActionRowBuilder().addComponents(\n                new ButtonBuilder().setCustomId('open_ticket_btn').setLabel('فتح تذكرة 🎫').setStyle(ButtonStyle.Success)\n            );\n            try {\n                await channel.send({ embeds: [embed], components: [row] });\n                await interaction.reply({ content: '✅ تم إرسال لوحة التذاكر التفاعلية بنجاح!', ephemeral: true });\n            } catch (e) { await interaction.reply({ content: `❌ فشل إرسال اللوحة: \${e.message}`, ephemeral: true }); }\n        }\n    }\n});\n\n// --- إدراج نظام خادم الويب والداش بورد المدمج مع الأيقونات الخضراء الفاخرة ---\nconst webApp = express();\nconst PORT = process.env.PORT || 3000;\n\nwebApp.use(bodyParser.urlencoded({ extended: true }));\nwebApp.use(session({\n    secret: 'elite-system-key-8493',\n    resave: false,\n    saveUninitialized: true,\n    cookie: { secure: false }\n}));\n\nconst ADMIN_PASSWORD = process.env.DASHBOARD_PASSWORD || 'admin123';\n\nwebApp.get('/', (req, res) => {\n    if (req.session.loggedIn) return res.redirect('/dashboard');\n    res.send(`\n        <!DOCTYPE html>\n        <html lang=\"ar\" dir=\"rtl\">\n        <head>\n            <meta charset=\"UTF-8\">\n            <title>بوابة التحكم التفاعلية | تسجيل الدخول</title>\n            <script src=\"https://cdn.tailwindcss.com\"></script>\n        </head>\n        <body class=\"bg-slate-950 text-white flex items-center justify-center min-h-screen\">\n            <div class=\"bg-slate-900 p-8 rounded-2xl shadow-xl w-full max-w-md border border-slate-800\">\n                <h1 class=\"text-2xl font-bold text-center text-indigo-400 mb-6\">بوابة إدارة البوت التفاعلي 🤖</h1>\n                <form action=\"/login\" method=\"POST\" class=\"space-y-4\">\n                    <input type=\"password\" name=\"password\" placeholder=\"رمز المرور السري\" class=\"w-full p-3 rounded bg-slate-800 border border-slate-700 text-center text-white focus:outline-none focus:border-indigo-500\" required>\n                    <button type=\"submit\" class=\"w-full bg-indigo-600 hover:bg-indigo-700 p-3 rounded font-bold transition\">تسجيل الدخول</button>\n                </form>\n            </div>\n        </body>\n        </html>\n    `);\n});\n\nwebApp.post('/login', (req, res) => {\n    if (req.body.password === ADMIN_PASSWORD) {\n        req.session.loggedIn = true;\n        res.redirect('/dashboard');\n    } else {\n        res.send('<script>alert(\"المعلومات المدخلة خاطئة!\"); window.location=\"/\";</script>');\n    }\n});\n\nwebApp.get('/dashboard', (req, res) => {\n    if (!req.session.loggedIn) return res.redirect('/');\n    const totalGuilds = client.guilds.cache.size;\n    const totalMembers = client.guilds.cache.reduce((acc, g) => acc + g.memberCount, 0);\n    let options = '';\n    client.guilds.cache.forEach(g => { options += \`<option value=\"\${g.id}\">${g.name}</option>\`; });\n\n    res.send(`\n        <!DOCTYPE html>\n        <html lang=\"ar\" dir=\"rtl\">\n        <head>\n            <meta charset=\"UTF-8\">\n            <title>لوحة التحكم الفنية الموحدة</title>\n            <script src=\"https://cdn.tailwindcss.com\"></script>\n        </head>\n        <body class=\"bg-slate-950 text-slate-100 min-h-screen flex flex-col\">\n            <header class=\"bg-slate-900 p-4 border-b border-slate-800 flex justify-between px-6\">\n                <h1 class=\"text-xl font-bold text-emerald-400\">لوحة إدارة الأنظمة الموحدة 🔮</h1>\n                <a href=\"/logout\" class=\"bg-rose-600 px-4 py-2 rounded font-bold text-sm\">خروج</a>\n            </header>\n            <main class=\"p-6 max-w-4xl w-full mx-auto space-y-6\">\n                <!-- عرض الأيقونات الخضراء الفاخرة داخل لوحة التحكم -->\n                <div class=\"grid grid-cols-2 md:grid-cols-4 gap-4\">\n                    <div class=\"bg-slate-900 p-4 rounded border border-slate-800 flex flex-col items-center justify-center\">\n                        <img src=\"https://i.imgur.com/G5yZlV1.png\" class=\"w-12 h-12 object-contain mb-2\" alt=\"Add Icon\">\n                        <span class=\"text-xs text-slate-400\">تخصيص الإعدادات</span>\n                    </div>\n                    <div class=\"bg-slate-900 p-4 rounded border border-slate-800 flex flex-col items-center justify-center\">\n                        <img src=\"https://i.imgur.com/0iKj4vV.png\" class=\"w-12 h-12 object-contain mb-2\" alt=\"Cart Icon\">\n                        <span class=\"text-xs text-slate-400\">متجر الإضافات</span>\n                    </div>\n                    <div class=\"bg-slate-900 p-4 rounded border border-slate-800 flex flex-col items-center justify-center\">\n                        <img src=\"https://i.imgur.com/KjEaQO6.png\" class=\"w-12 h-12 object-contain mb-2\" alt=\"Ticket Icon\">\n                        <span class=\"text-xs text-slate-400\">إدارة التذاكر</span>\n                    </div>\n                    <div class=\"bg-slate-900 p-4 rounded border border-slate-800 flex flex-col items-center justify-center\">\n                        <img src=\"https://i.imgur.com/tFv0p1O.png\" class=\"w-12 h-12 object-contain mb-2\" alt=\"Link Icon\">\n                        <span class=\"text-xs text-slate-400\">روابط الاتصال</span>\n                    </div>\n                </div>\n                <div class=\"grid grid-cols-1 md:grid-cols-3 gap-6\">\n                    <div class=\"bg-slate-900 p-6 rounded border border-slate-800\"><h3>الخوادم المتصلة</h3><p class=\"text-3xl font-bold text-indigo-400\">\${totalGuilds}</p></div>\n                    <div class=\"bg-slate-900 p-6 rounded border border-slate-800\"><h3>الأعضاء النشطون</h3><p class=\"text-3xl font-bold text-emerald-400\">\${totalMembers}</p></div>\n                    <div class=\"bg-slate-900 p-6 rounded border border-slate-800\"><h3>الاستجابة</h3><p class=\"text-3xl font-bold text-amber-400\">\${client.ws.ping} ms</p></div>\n                </div>\n                <div class=\"bg-slate-900 p-6 rounded border border-slate-800 space-y-4\">\n                    <h2 class=\"text-lg font-bold text-indigo-400\">⚙️ إعدادات الرومات والتذاكر للشبكة</h2>\n                    <form action=\"/save-config\" method=\"POST\" class=\"space-y-4\">\n                        <select name=\"guildId\" class=\"w-full p-3 rounded bg-slate-800 border border-slate-700 text-white\">\${options}</select>\n                        <input type=\"text\" name=\"ticketCategoryId\" placeholder=\"آي دي (ID) كاتيجوري التذاكر\" class=\"w-full p-3 rounded bg-slate-800 border border-slate-700 text-white\">\n                        <input type=\"text\" name=\"logsChannelId\" placeholder=\"آي دي (ID) روم سجلات الإجراءات\" class=\"w-full p-3 rounded bg-slate-800 border border-slate-700 text-white\">\n                        <button type=\"submit\" class=\"w-full bg-indigo-600 p-3 rounded font-bold text-white\">حفظ الإعدادات الفنية</button>\n                    </form>\n                </div>\n            </main>\n        </body>\n        </html>\n    `);\n});\n\nwebApp.post('/save-config', async (req, res) => {\n    if (!req.session.loggedIn) return res.redirect('/');\n    const { guildId, ticketCategoryId, logsChannelId } = req.body;\n    try {\n        const config = await getGuildConfig(guildId);\n        if (ticketCategoryId) config.ticketCategoryId = ticketCategoryId;\n        if (logsChannelId) config.logsChannelId = logsChannelId;\n        await saveGuildConfig(guildId, config);\n        res.send('<script>alert(\"تم تحديث إعدادات السيرفر وحفظها تلقائياً!\"); window.location=\"/dashboard\";</script>');\n    } catch (e) {\n        res.send('<script>alert(\"حدث خطأ أثناء الاتصال وحفظ البيانات!\"); window.location=\"/dashboard\";</script>');\n    }\n});\n\nwebApp.get('/logout', (req, res) => {\n    req.session.destroy();\n    res.redirect('/');\n});\n\nwebApp.listen(PORT, () => console.log(`[Web] ProBot Dashboard active 24/7 on port \${PORT}`));\n\nconst TOKEN = process.env.DISCORD_TOKEN || 'your_token_here';\nclient.login(TOKEN);"
-  }
-]
+const { Client, GatewayIntentBits, REST, Routes, SlashCommandBuilder, PermissionFlagsBits } = require('discord.js');
+
+// إنشاء الكلاينت مع الصلاحيات الأساسية
+const client = new Client({ 
+    intents: [GatewayIntentBits.Guilds, GatewayIntentBits.GuildMembers] 
+});
+
+// تعريف أوامر الـ Slash
+const commands = [
+    new SlashCommandBuilder()
+        .setName('game')
+        .setDescription('لعبة رمي العملة (ملك أم كتابة)'),
+    
+    new SlashCommandBuilder()
+        .setName('color')
+        .setDescription('تغيير لون اسمك باستخدام كود Hex')
+        .addStringOption(option => 
+            option.setName('hex')
+                .setDescription('كود اللون (مثال: #ff0000)')
+                .setRequired(true)),
+    
+    new SlashCommandBuilder()
+        .setName('ban')
+        .setDescription('حظر عضو من السيرفر')
+        .addUserOption(option => 
+            option.setName('user')
+                .setDescription('العضو المراد حظره')
+                .setRequired(true))
+        .setDefaultMemberPermissions(PermissionFlagsBits.BanMembers)
+];
+
+// تسجيل الأوامر تلقائياً عند تشغيل البوت
+client.once('ready', async () => {
+    console.log(`تم تشغيل البوت: ${client.user.tag}`);
+    const rest = new REST({ version: '10' }).setToken(process.env.DISCORD_TOKEN);
+    try {
+        await rest.put(Routes.applicationCommands(client.user.id), { body: commands });
+        console.log('تم تسجيل أوامر الـ Slash بنجاح.');
+    } catch (error) {
+        console.error('خطأ في تسجيل الأوامر:', error);
+    }
+});
+
+// معالجة الأوامر التفاعلية
+client.on('interactionCreate', async (interaction) => {
+    if (!interaction.isChatInputCommand()) return;
+
+    const { commandName, options } = interaction;
+
+    // 1. أمر اللعبة (Game)
+    if (commandName === 'game') {
+        const choices = ['🪙 ملك (Heads)', '🪙 كتابة (Tails)'];
+        const result = choices[Math.floor(Math.random() * choices.length)];
+        return interaction.reply(`النتيجة هي: **${result}**`);
+    }
+
+    // 2. أمر الألوان (Color)
+    if (commandName === 'color') {
+        const hex = options.getString('hex');
+        
+        // التحقق من صحة كود اللون المدخل
+        if (!hex.startsWith('#') || hex.length !== 7) {
+            return interaction.reply({ content: 'الرجاء إدخال كود لون صحيح يبدأ بـ #. مثال: `#ff0000`', ephemeral: true });
+        }
+
+        await interaction.deferReply();
+
+        try {
+            // البحث عن الرتبة أو إنشاؤها إن لم تكن موجودة
+            let role = interaction.guild.roles.cache.find(r => r.name === `color-${hex}`);
+            if (!role) {
+                role = await interaction.guild.roles.create({
+                    name: `color-${hex}`,
+                    color: hex,
+                    reason: 'تخصيص لون الاسم من البوت'
+                });
+            }
+
+            // إزالة رتب الألوان القديمة التي تبدأ بـ "color-" لتفادي تراكم الرتب على المستخدم
+            const oldColorRoles = interaction.member.roles.cache.filter(r => r.name.startsWith('color-'));
+            for (const [id, r] of oldColorRoles) {
+                await interaction.member.roles.remove(r);
+            }
+
+            // إعطاء الرتبة الجديدة للعضو
+            await interaction.member.roles.add(role);
+            return interaction.editReply(`تم تغيير لون اسمك إلى **${hex}** بنجاح!`);
+        } catch (err) {
+            console.error(err);
+            return interaction.editReply('حدث خطأ أثناء محاولة تعديل اللون. يرجى التأكد من أن رتبة البوت أعلى من رتب الألوان في قائمة الرتب.');
+        }
+    }
+
+    // 3. أمر البان (Ban)
+    if (commandName === 'ban') {
+        const user = options.getUser('user');
+        const member = interaction.guild.members.cache.get(user.id);
+
+        if (!member) {
+            return interaction.reply({ content: 'العضو غير موجود في هذا السيرفر.', ephemeral: true });
+        }
+
+        if (!member.bannable) {
+            return interaction.reply({ content: 'لا يمكنني حظر هذا العضو، رتبته أعلى مني أو لا أملك الصلاحيات الكافية.', ephemeral: true });
+        }
+
+        try {
+            await member.ban({ reason: `تم الحظر بواسطة ${interaction.user.tag}` });
+            return interaction.reply(`تم حظر العضو **${user.tag}** بنجاح.`);
+        } catch (err) {
+            console.error(err);
+            return interaction.reply({ content: 'فشل حظر العضو بسبب خطأ داخلي.', ephemeral: true });
+        }
+    }
+});
+
+// تسجيل الدخول عبر توكن البوت المخزن في متغيرات البيئة
+client.login(process.env.DISCORD_TOKEN);
