@@ -2,5 +2,7 @@
   "warns": {},
   "lockedChannels": {},
   "vouchers": {},
-  "replies": {}
+  "replies": {},
+  "tickets": {},
+  "ticketConfig": {}
 }
