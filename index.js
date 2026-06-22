@@ -1,4 +1,4 @@
-const { Client, GatewayIntentBits, EmbedBuilder, ActionRowBuilder, ButtonBuilder, ButtonStyle, REST, Routes, SlashCommandBuilder } = require('discord.js');
+const { Client, GatewayIntentBits, EmbedBuilder, ActionRowBuilder, ButtonBuilder, ButtonStyle, REST, Routes, SlashCommandBuilder, PermissionsBitField } = require('discord.js');
 const express = require('express');
 const mongoose = require('mongoose');
 const commandsList = require('./commands.js');
@@ -47,7 +47,18 @@ const client = new Client({
 });
 
 const PREFIX = '+';
-const OWNER_ID = '123456789012345678'; // ⚠️ ضع هنا الآيدي الخاص بحسابك الشخصي في ديسكورد
+
+// دالة فحص الصلاحيات التلقائية (الأونر أو الإداري)
+function hasOwnerPermission(member) {
+    // 1. إذا كان العضو يمتلك صلاحية Administrator كاملة بالسيرفر
+    if (member.permissions.has(PermissionsBitField.Flags.Administrator)) return true;
+    
+    // 2. إذا كان العضو يمتلك الرتبة المخصصة للبوت (Owner [اسم البوت])
+    const botOwnerRoleName = `Owner ${client.user.username}`;
+    if (member.roles.cache.some(role => role.name === botOwnerRoleName)) return true;
+
+    return false;
+}
 
 // دالات جلب البيانات
 async function getUserData(id) {
@@ -91,6 +102,50 @@ client.once('ready', async () => {
     }
 });
 
+// ---------------- [ حدث دخول البوت لسيرفر جديد ] ----------------
+client.on('guildCreate', async (guild) => {
+    try {
+        console.log(`📥 دخلت سيرفر جديد: ${guild.name}`);
+        const roleName = `Owner ${client.user.username}`;
+        
+        // 1. إنشاء الرتبة التلقائية إذا لم تكن موجودة
+        let ownerRole = guild.roles.cache.find(r => r.name === roleName);
+        if (!ownerRole) {
+            ownerRole = await guild.roles.create({
+                name: roleName,
+                color: '#ED4245',
+                reason: 'رتبة تلقائية للتحكم بأوامر البوت الخاصة بالأونر'
+            });
+            console.log(`👑 تم إنشاء رتبة التحكم: ${roleName}`);
+        }
+
+        // 2. البحث عن أعلى رتبة إدارية تمتلك Administrator لمنشنتها
+        const adminRole = guild.roles.cache
+            .filter(r => r.permissions.has(PermissionsBitField.Flags.Administrator) && r.name !== '@everyone' && r.id !== ownerRole.id)
+            .sort((a, b) => b.position - a.position)
+            .first();
+
+        const mentionTarget = adminRole ? adminRole.toString() : `<@${guild.ownerId}>`;
+
+        // 3. البحث عن أول روم نصي متاح لإرسال الرسالة والمنشن
+        const defaultChannel = guild.channels.cache
+            .filter(c => c.isTextBased() && c.permissionsFor(guild.members.me).has(PermissionsBitField.Flags.SendMessages))
+            .first();
+
+        if (defaultChannel) {
+            const setupEmbed = new EmbedBuilder()
+                .setColor('#ED4245')
+                .setTitle(`🤖 تم تفعيل البوت بنجاح في ${guild.name}`)
+                .setDescription(`مرحباً يا إدارة السيرفر، لقد قمت بإنشاء رتبة مخصصة لي تلقائياً باسم:\n**\`${roleName}\`**\n\n⚠️ **تنبيه:** يجب إعطاء هذه الرتبة للأشخاص المسؤولين عن إدارة البوت لكي يتمكنوا من استخدام أوامر التحكم والأونر الـ (Premium)، أما الصلاحيات العادية والأونر العامين والـ \`Administrator\` مفعّلين تلقائياً!`)
+                .setThumbnail('https://raw.githubusercontent.com/xogametaim/bot-assets/main/1000002184.png');
+
+            await defaultChannel.send({ content: `🔔 تنبيه للإدارة العالية: ${mentionTarget}`, embeds: [setupEmbed] });
+        }
+    } catch (err) {
+        console.error('❌ خطأ أثناء تهيئة السيرفر الجديد:', err);
+    }
+});
+
 // ---------------- [ التفاعل مع أوامر السلاش ] ----------------
 client.on('interactionCreate', async (interaction) => {
     if (!interaction.isChatInputCommand()) return;
@@ -103,7 +158,7 @@ client.on('interactionCreate', async (interaction) => {
             .setColor('#ED4245')
             .setTitle('📚 قائمة مساعدة FROM TRL TEAM™')
             .setDescription('يرجى اختيار القسم الذي تريد استعراضه من خلال الأزرار أدناه:')
-            .setThumbnail('https://raw.githubusercontent.com/xogametaim/bot-assets/main/1000002184.png'); // استخدام اسم الملف 1000002184.png
+            .setThumbnail('https://raw.githubusercontent.com/xogametaim/bot-assets/main/1000002184.png');
 
         const row = new ActionRowBuilder().addComponents(
             new ButtonBuilder().setCustomId('help_owner').setLabel('👑 أوامر الأونر').setStyle(ButtonStyle.Danger),
@@ -117,7 +172,7 @@ client.on('interactionCreate', async (interaction) => {
         const infoEmbed = new EmbedBuilder()
             .setColor('#00F0FF')
             .setTitle('👑 الملف الشخصي والمعلومات الأساسية')
-            .setThumbnail('https://raw.githubusercontent.com/xogametaim/bot-assets/main/1000002188.png') // استخدام اسم الملف 1000002188.png
+            .setThumbnail('https://raw.githubusercontent.com/xogametaim/bot-assets/main/1000002188.png')
             .setDescription('**الاسم:** تيم (Taim)\n**المسمى التقني:** مؤسس وقائد فريق TRL.dev\n**البريد الإلكتروني:** hacked909h@gmail.com')
             .addFields(
                 { name: '🚀 المهارات والقدرات', value: '• تطوير بوتات ديسكورد وتطبيقات الويب\n• لغات البرمجة: Python, JavaScript' }
@@ -136,7 +191,7 @@ client.on('interactionCreate', async (interaction) => {
             .setColor('#57F287')
             .setTitle('📦 مخزون الأعضاء')
             .setDescription(`ستوك الأعضاء المتواجد حالياً هو: \`${config.stockCount}\` عضو.`)
-            .setThumbnail('https://raw.githubusercontent.com/xogametaim/bot-assets/main/1000002186.png'); // استخدام اسم الملف 1000002186.png
+            .setThumbnail('https://raw.githubusercontent.com/xogametaim/bot-assets/main/1000002186.png');
         return interaction.reply({ embeds: [stockEmbed] });
     }
 
@@ -150,13 +205,13 @@ client.on('interactionCreate', async (interaction) => {
 
 // ---------------- [ أوامر البريفكس العادية (+)] ----------------
 client.on('messageCreate', async (message) => {
-    if (message.author.bot || !message.content.startsWith(PREFIX)) return;
+    if (message.author.bot || !message.content.startsWith(PREFIX) || !message.guild) return;
 
     const args = message.content.slice(PREFIX.length).trim().split(/ +/);
     const command = args.shift().toLowerCase();
-    const isOwner = message.author.id === OWNER_ID;
     const config = await getBotConfig(message.guild.id);
 
+    // أمر الضريبة متاح للجميع بدون شروط رتب
     if (command === 'tax') {
         const amount = parseInt(args[0]);
         if (isNaN(amount) || amount <= 0) return message.reply('⚠️ مثال: `+tax 1000`');
@@ -164,8 +219,8 @@ client.on('messageCreate', async (message) => {
         return message.reply(`💰 المبلغ مع الضريبة هو: \`${tax}\``);
     }
 
-    // ==================== [ أوامر الأونر بالبريفكس ] ====================
-    if (!isOwner) return;
+    // ==================== [ التحقق من صلاحيات الأونر للأوامر القادمة ] ====================
+    if (!hasOwnerPermission(message.member)) return; // البوت سيتجاهل الأمر تماماً إذا لم يكن الشخص إدارياً أو يملك الرتبة
 
     if (command === 'give') {
         const target = message.mentions.users.first(); const amount = parseInt(args[1]);
@@ -222,7 +277,7 @@ client.on('messageCreate', async (message) => {
     }
 
     if (command === 'send') {
-        const embed = new EmbedBuilder().setColor('#2F3136').setTitle('🔗 نظام التوثيق الفوري').setThumbnail('https://raw.githubusercontent.com/xogametaim/bot-assets/main/1000002188.png'); // استخدام اسم الملف 1000002188.png
+        const embed = new EmbedBuilder().setColor('#2F3136').setTitle('🔗 نظام التوثيق الفوري').setThumbnail('https://raw.githubusercontent.com/xogametaim/bot-assets/main/1000002188.png');
         const row = new ActionRowBuilder().addComponents(new ButtonBuilder().setCustomId('verify_user').setLabel('✅ وثق نفسك هنا').setStyle(ButtonStyle.Success));
         return message.channel.send({ embeds: [embed], components: [row] });
     }
@@ -232,7 +287,7 @@ client.on('messageCreate', async (message) => {
             .setColor('#00FF66')
             .setTitle('🛒 لوحة شراء الأعضاء والخدمات')
             .setDescription(`• سعر العضو الحالي: \`${config.price}\` كوينز.\n• الحد الأدنى: \`${config.minLimit}\` عضو.`)
-            .setImage('https://raw.githubusercontent.com/xogametaim/bot-assets/main/1000002184.png'); // استخدام اسم الملف 1000002184.png
+            .setImage('https://raw.githubusercontent.com/xogametaim/bot-assets/main/1000002184.png');
         const row = new ActionRowBuilder().addComponents(new ButtonBuilder().setCustomId('buy_members').setLabel('🛒 شراء أعضاء').setStyle(ButtonStyle.Success));
         return message.channel.send({ embeds: [panelEmbed], components: [row] });
     }
@@ -253,10 +308,14 @@ client.on('interactionCreate', async (interaction) => {
     if (!interaction.isButton()) return;
 
     if (interaction.customId === 'help_owner') {
+        // التحقق من أن الشخص الذي ضغط على زر أوامر الأونر يمتلك الرتبة أو الصلاحية فعلاً
+        if (!hasOwnerPermission(interaction.member)) {
+            return interaction.reply({ content: '❌ عذراً، هذا القسم مخصص فقط للأونر أو الإداريين الذين يملكون صلاحية الـ Administrator!', ephemeral: true });
+        }
+
         let ownerFields = commandsList.owner.map(cmd => ({ name: cmd.name, value: cmd.desc }));
         const ownerEmbed = new EmbedBuilder().setColor('#ED4245').setTitle('👑 أوامر الأونر (المطور)').addFields(ownerFields.slice(0, 25));
         
-        // أزرار التنقل المضافة لسهولة العودة
         const row = new ActionRowBuilder().addComponents(
             new ButtonBuilder().setCustomId('help_public').setLabel('👥 الأوامر العامة').setStyle(ButtonStyle.Primary),
             new ButtonBuilder().setLabel('🔗 إضافة البوت من هنا').setStyle(ButtonStyle.Link).setURL('https://discord.com/oauth2/authorize?client_id=1518357964984156300&permissions=8&integration_type=0&scope=bot+applications.commands')
@@ -285,7 +344,7 @@ client.on('interactionCreate', async (interaction) => {
         const ticketEmbed = new EmbedBuilder()
             .setColor('#ED4245')
             .setTitle('🎫 تذكرة الشراء والدعم الفني')
-            .setThumbnail('https://raw.githubusercontent.com/xogametaim/bot-assets/main/1000002187.png') // استخدام اسم الملف 1000002187.png
+            .setThumbnail('https://raw.githubusercontent.com/xogametaim/bot-assets/main/1000002187.png')
             .setDescription('يرجى كتابة الكمية التي تريد شراءها وسيتم الرد عليك فوراً.');
         await interaction.reply({ embeds: [ticketEmbed], ephemeral: true });
     }
