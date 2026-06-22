@@ -1,7 +1,7 @@
 {
-  "name": "from-trl-team",
+  "name": "trl-bank-bot",
   "version": "1.0.0",
-  "description": "FROM TRL TEAM™ Discord Bot",
+  "description": "FROM TRL TEAM™ Bot with Slash Commands & Database Support",
   "main": "index.js",
   "scripts": {
     "start": "node index.js"
@@ -9,6 +9,9 @@
   "dependencies": {
     "discord.js": "^14.14.1",
     "express": "^4.19.2",
-    "mongoose": "^8.0.0"
+    "mongoose": "^8.2.1"
+  },
+  "engines": {
+    "node": ">=16.9.0"
   }
 }
