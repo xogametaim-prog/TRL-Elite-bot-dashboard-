@@ -20,6 +20,7 @@ const PORT = process.env.PORT || 3000;
 app.get('/', (req, res) => res.send('Ticket bot is running!'));
 app.listen(PORT, '0.0.0.0', () => console.log(`Server connected to port ${PORT}`));
 
+// تفعيل كامل الـ Intents الأساسية لضمان قراءة الاختصار -st
 const client = new Client({
     intents: [
         GatewayIntentBits.Guilds,
@@ -28,7 +29,7 @@ const client = new Client({
     ]
 });
 
-// البريفكس المختصر الذي طلبته
+// الاختصار
 const PREFIX = '-st'; 
 
 // لتخزين الإعدادات المؤقتة التي تختارها أنت بنفسك أثناء الإعداد التفاعلي
@@ -49,6 +50,7 @@ client.once('ready', async () => {
 
     const rest = new REST({ version: '10' }).setToken(TOKEN);
     try {
+        // تم تحديث الكود ليسجل الأوامر فورياً داخل جميع سيرفرات البوت لضمان ظهورها بدون تأخير
         await rest.put(
             Routes.applicationCommands(CLIENT_ID),
             { body: commands },
@@ -61,7 +63,6 @@ client.once('ready', async () => {
 
 // دالة لبدء عملية التخصيص التفاعلية معك خطوة بخطوة
 async function startInteractiveSetup(messageOrInteraction, channel, user) {
-    // التأكد من أن المستخدم لديه صلاحيات الإدارة
     const member = channel.guild.members.cache.get(user.id);
     if (!member.permissions.has(PermissionFlagsBits.Administrator)) {
         const replyContent = '❌ عذراً، هذا الأمر مخصص للإداريين فقط.';
@@ -105,7 +106,6 @@ client.on('messageCreate', async message => {
         const state = tempSetup.get(message.author.id);
 
         if (state.step === 1) {
-            // إدخال أيدي الرتبة
             const roleId = message.content.trim();
             const role = message.guild.roles.cache.get(roleId);
             if (!role) {
@@ -117,14 +117,12 @@ client.on('messageCreate', async message => {
         }
 
         if (state.step === 2) {
-            // تسمية المربع/الخيار
             state.boxTitle = message.content.trim();
             state.step = 3;
             return message.reply(`✅ تم حفظ الاسم: **${state.boxTitle}**\n\n**الخطوة [3/4]:** ضع رابط الصورة (Image URL) للبوكس الرئيسي (إذا كنت لا تريد صورة اكتب: \`لا\`):`);
         }
 
         if (state.step === 3) {
-            // تحديد الصورة
             const input = message.content.trim();
             if (input.toLowerCase() !== 'لا' && input.startsWith('http')) {
                 state.imageUrl = input;
@@ -136,7 +134,6 @@ client.on('messageCreate', async message => {
         }
 
         if (state.step === 4) {
-            // تحديد القسم النهائي وإنشاء البوكس فوراً
             const input = message.content.trim();
             if (input.toLowerCase() !== 'لا') {
                 state.categoryId = input;
@@ -144,7 +141,6 @@ client.on('messageCreate', async message => {
                 state.categoryId = null;
             }
 
-            // إرسال البوكس النهائي المخصص بالكامل بناءً على اختياراتك
             const embed = new EmbedBuilder()
                 .setTitle('الدعم الفني | Support Setup')
                 .setDescription(`يرجى اختيار القسم المخصص أدناه لفتح تذكرة مباشرة مع رتبة الدعم المخصصة.`)
@@ -170,7 +166,6 @@ client.on('messageCreate', async message => {
             await message.channel.send({ embeds: [embed], components: [row] });
             await message.reply('🎉 **تم إنشاء وتخصيص البوكس بنجاح بناءً على الخيارات التي أدخلتها بنفسك!**');
 
-            // إنهاء وإزالة الجلسة التفاعلية للمستخدم
             tempSetup.delete(message.author.id);
         }
     }
@@ -178,19 +173,16 @@ client.on('messageCreate', async message => {
 
 // التعامل مع أوامر السلاش والتفاعلات
 client.on('interactionCreate', async interaction => {
-    // تشغيل الإعداد التفاعلي عبر السلاش /setup
     if (interaction.isChatInputCommand()) {
         if (interaction.commandName === 'setup') {
             await startInteractiveSetup(interaction, interaction.channel, interaction.user);
         }
     }
 
-    // فتح تذكرة بناءً على الخيارات المخصصة ديناميكياً والمخزنة في معرف القائمة (Custom ID)
     if (interaction.isStringSelectMenu()) {
         if (interaction.customId.startsWith('custom_ticket_menu_')) {
             await interaction.deferReply({ ephemeral: true });
 
-            // استخراج الرتبة والقسم ديناميكياً من معرف القائمة نفسه
             const parts = interaction.customId.split('_');
             const targetRoleId = parts[3];
             const targetCategoryId = parts[4] === 'none' ? null : parts[4];
@@ -200,16 +192,15 @@ client.on('interactionCreate', async interaction => {
 
             const permissionOverwrites = [
                 {
-                    id: guild.id, // إخفاء عن الجميع
+                    id: guild.id, 
                     deny: [PermissionFlagsBits.ViewChannel],
                 },
                 {
-                    id: member.id, // العضو الذي فتح التذكرة
+                    id: member.id, 
                     allow: [PermissionFlagsBits.ViewChannel, PermissionFlagsBits.SendMessages, PermissionFlagsBits.ReadMessageHistory],
                 }
             ];
 
-            // السماح للرتبة التي قمت أنت بتحديدها برؤية التذكرة والكتابة
             if (targetRoleId) {
                 permissionOverwrites.push({
                     id: targetRoleId,
@@ -261,7 +252,6 @@ client.on('interactionCreate', async interaction => {
         }
     }
 
-    // التعامل مع الأزرار الديناميكية (الاستلام والإغلاق للرتبة المحددة)
     if (interaction.isButton()) {
         const customId = interaction.customId;
 
@@ -269,7 +259,6 @@ client.on('interactionCreate', async interaction => {
             const targetRoleId = customId.replace('claim_custom_ticket_', '');
             const member = interaction.member;
 
-            // التحقق من الرتبة المحددة التي اخترتها للبوكس
             const hasRequiredRole = member.roles.cache.has(targetRoleId) || member.permissions.has(PermissionFlagsBits.Administrator);
 
             if (!hasRequiredRole) {
