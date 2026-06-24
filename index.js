@@ -1,6 +1,6 @@
 /**
  * ╔══════════════════════════════════════════════════════════════════════╗
- * ║                      SYSTEM BOT - COMPLETE EDITION                   ║
+ * ║                  SYSTEM BOT - TICKET & EMBED ONLY                    ║
  * ║         Developed by Taim (Lead Developer & Founder)                 ║
  * ║                Powered & Secured by TRL.dev Team                     ║
  * ╚══════════════════════════════════════════════════════════════════════╝
@@ -9,7 +9,6 @@
 const { 
   Client, 
   GatewayIntentBits, 
-  Collection, 
   REST, 
   Routes, 
   EmbedBuilder, 
@@ -30,35 +29,34 @@ const server = http.createServer((req, res) => {
   res.end('TRL.dev System Bot Is Fully Operational and Live! 🚀\n');
 });
 server.listen(process.env.PORT || 3000, () => {
-  console.log('🌐 Web Server generated for Uptime Robot pinging.');
+  console.log('🌐 Web Server generated for Render uptime.');
 });
 
-// [2] إعداد الجلسة وتفعيل الـ Intents الكاملة لقراءة الرسائل والأعضاء
+// [2] إعداد الجلسة وتفعيل الـ Intents الأساسية لقراءة السيرفرات والأعضاء
 const client = new Client({
   intents: [
     GatewayIntentBits.Guilds,
     GatewayIntentBits.GuildMessages,
-    GatewayIntentBits.MessageContent,
     GatewayIntentBits.GuildMembers
   ]
 });
 
-// جلب التوكن وآيدي البوت من البيئة
+// جلب التوكن وآيدي البوت من البيئة (Environment Variables)
 const TOKEN = process.env.TOKEN; 
 const CLIENT_ID = "1254845579979329618"; 
 
-// دالة جلب وحفظ البيانات من ملف db.json بشكل آمن وضمان عدم الضياع
+// دالة جلب وحفظ البيانات من ملف db.json بشكل آمن للـ Tickets فقط
 function getDB() { 
   try {
     return JSON.parse(fs.readFileSync('./db.json', 'utf8')); 
   } catch(e) {
-    return { warns: {}, vouchers: {}, replies: {}, tickets: {}, ticketConfig: {}, userMessages: {}, levelConfig: {} };
+    return { tickets: {}, ticketConfig: {} };
   }
 }
 function saveDB(db) { fs.writeFileSync('./db.json', JSON.stringify(db, null, 2)); }
 
-// [3] بناء مصفوفة الأوامر الكاملة (Slash Commands Data)
-const commandsData = [
+// [3] بناء مصفوفة الأوامر باستخدام SlashCommandBuilder وتحويلها لـ JSON عند الإرسال فقط
+const commands = [
   new SlashCommandBuilder()
     .setName('setup-ticket')
     .setDescription('إعداد لوحة التكتات بقائمة منسدلة احترافية مع دعم الصور')
@@ -66,49 +64,39 @@ const commandsData = [
     .addStringOption(o => o.setName('description').setRequired(true).setDescription('وصف اللوحة والتعليمات'))
     .addStringOption(o => o.setName('options').setRequired(true).setDescription('الأقسام تفصل بينها بفاصلة (مثال: دعم فني,شكاوي,استفسار)'))
     .addRoleOption(o => o.setName('staff-role').setRequired(true).setDescription('الرتبة المسؤول عن استلام هذه التذاكر'))
-    .addStringOption(o => o.setName('image').setDescription('رابط الصورة المخصصة للوحة (اختياري)')).toJSON(),
+    .addStringOption(o => o.setName('image').setDescription('رابط الصورة المخصصة للوحة (اختياري)')),
 
   new SlashCommandBuilder()
     .setName('embed')
     .setDescription('إرسال رسالة إيمبد مخصصة مع بوكس للصورة للادارة')
     .addStringOption(o => o.setName('title').setRequired(true).setDescription('عنوان الرسالة'))
     .addStringOption(o => o.setName('description').setRequired(true).setDescription('محتوى الرسالة ووصفها'))
-    .addStringOption(o => o.setName('image').setDescription('رابط الصورة (Image URL)')).toJSON(),
-
-  new SlashCommandBuilder()
-    .setName('setup-levels')
-    .setDescription('إعداد نظام الرتب لـ 10 رتب مخصصة حسب عدد الرسائل')
-    .addChannelOption(o => o.setName('log-channel').setRequired(true).setDescription('روم إرسال التبريكات بالترقية'))
-    .addRoleOption(o => o.setName('role1').setRequired(true).setDescription('الرتبة 1')).addIntegerOption(o => o.setName('messages1').setRequired(true).setDescription('رسائل 1'))
-    .addRoleOption(o => o.setName('role2').setDescription('الرتبة 2')).addIntegerOption(o => o.setName('messages2').setDescription('رسائل 2'))
-    .addRoleOption(o => o.setName('role3').setDescription('الرتبة 3')).addIntegerOption(o => o.setName('messages3').setDescription('رسائل 3'))
-    .addRoleOption(o => o.setName('role4').setDescription('الرتبة 4')).addIntegerOption(o => o.setName('messages4').setDescription('رسائل 4'))
-    .addRoleOption(o => o.setName('role5').setDescription('الرتبة 5')).addIntegerOption(o => o.setName('messages5').setDescription('رسائل 5'))
-    .addRoleOption(o => o.setName('role6').setDescription('الرتبة 6')).addIntegerOption(o => o.setName('messages6').setDescription('رسائل 6'))
-    .addRoleOption(o => o.setName('role7').setDescription('الرتبة 7')).addIntegerOption(o => o.setName('messages7').setDescription('رسائل 7'))
-    .addRoleOption(o => o.setName('role8').setDescription('الرتبة 8')).addIntegerOption(o => o.setName('messages8').setDescription('رسائل 8'))
-    .addRoleOption(o => o.setName('role9').setDescription('الرتبة 9')).addIntegerOption(o => o.setName('messages9').setDescription('رسائل 9'))
-    .addRoleOption(o => o.setName('role10').setDescription('الرتبة 10')).addIntegerOption(o => o.setName('messages10').setDescription('رسائل 10')).toJSON(),
-
-  new SlashCommandBuilder()
-    .setName('voucher')
-    .setDescription('تحديد روم الحالية لتكون روم سجل العمليات الإدارية')
-    .addChannelOption(o => o.setName('channel').setRequired(true).setDescription('الروم المخصصة')).toJSON(),
+    .addStringOption(o => o.setName('image').setDescription('رابط الصورة (Image URL)')),
 
   new SlashCommandBuilder()
     .setName('info')
-    .setDescription('عرض ملف المطور الشخصي لـ تيم والمعلومات الأساسية لـ TRL.dev').toJSON()
+    .setDescription('عرض ملف المطور الشخصي لـ تيم والمعلومات الأساسية لـ TRL.dev')
 ];
 
-// [4] حدث إقلاع البوت وتسجيل الأوامر تلقائياً فورياً بالسيرفرات
+// [4] حدث إقلاع البوت وتحديث الأوامر وتنظيف القديم تلقائياً
 client.once('ready', async () => {
   console.log(`✨ [TRL.dev] Connected successfully as: ${client.user.tag}`);
   const rest = new REST({ version: '10' }).setToken(TOKEN);
   try {
-    console.log('⏳ Syncing and registering application (/) commands...');
-    await rest.put(Routes.applicationCommands(CLIENT_ID), { body: commandsData });
-    console.log('🎉 All Commands Synced Perfectly on Discord Guilds!');
-  } catch (error) { console.error('❌ Sync Error:', error); }
+    console.log('⏳ Cleaning old commands and syncing new ones...');
+    
+    // تحويل المصفوفة إلى JSON أثناء التسجيل الفعلي
+    const commandsJSON = commands.map(cmd => cmd.toJSON());
+    
+    await rest.put(
+      Routes.applicationCommands(CLIENT_ID),
+      { body: commandsJSON }
+    );
+    
+    console.log('🎉 Registered Ticket & Embed Commands Perfectly!');
+  } catch (error) { 
+    console.error('❌ Sync Error:', error); 
+  }
 });
 
 // [5] استقبال التفاعلات (أوامر السلاش، القوائم المنسدلة، أزرار التكتات)
@@ -172,29 +160,6 @@ client.on('interactionCreate', async interaction => {
       return interaction.reply({ content: '✅ تم إرسال رسالة الإيمبد بنجاح مذهل!', ephemeral: true });
     }
 
-    // أمر نظام الـ 10 ليفلات
-    if (interaction.commandName === 'setup-levels') {
-      const logChannel = interaction.options.getChannel('log-channel');
-      if (!db.levelConfig) db.levelConfig = {};
-      db.levelConfig[guildId] = { channelId: logChannel.id, roles: [] };
-
-      for (let i = 1; i <= 10; i++) {
-        const role = interaction.options.getRole(`role${i}`);
-        const msgs = interaction.options.getInteger(`messages${i}`);
-        if (role && msgs) db.levelConfig[guildId].roles.push({ roleId: role.id, requiredMessages: msgs });
-      }
-      db.levelConfig[guildId].roles.sort((a, b) => a.requiredMessages - b.requiredMessages);
-      saveDB(db);
-      return interaction.reply({ content: `✅ تم تفعيل إعدادات الـ 10 ليفلات بنجاح وروم الإرسال: ${logChannel}`, ephemeral: true });
-    }
-
-    // أمر الفاوتشر
-    if (interaction.commandName === 'voucher') {
-      const channel = interaction.options.getChannel('channel');
-      if (!db.vouchers) db.vouchers = {}; db.vouchers[guildId] = channel.id; saveDB(db);
-      return interaction.reply(`✅ تم اعتماد الروم ${channel} لتكون روم الـ **voucher log**.`);
-    }
-
     // أمر معلومات المطور تيم
     if (interaction.commandName === 'info') {
       const embed = new EmbedBuilder()
@@ -205,7 +170,7 @@ client.on('interactionCreate', async interaction => {
           { name: '⚡ الفريق والمنظمة', value: 'مؤسس وقائد فريق TRL.dev و مجتمع BRQ 🎉', inline: true },
           { name: '🛠️ التخصص التقني', value: '• هندسة وبرمجة بوتات ديسكورد المتقدمة وتطوير صفحات الويب والأنظمة الذكية.' }
         )
-        .setFooter({ text: 'system bot for all • Developed beautifully by TRL.dev' });
+        .setFooter({ text: 'system bot • Developed beautifully by TRL.dev' });
       return interaction.reply({ embeds: [embed] });
     }
   }
@@ -253,7 +218,7 @@ client.on('interactionCreate', async interaction => {
     return interaction.reply({ content: `✅ تم فتح تذكرتك بنجاح فائق في: ${ticketChannel}`, ephemeral: true });
   }
 
-  // ج) معالجة أزرار التحكم داخل التكت (قفل الإغلاق للعضو العادي)
+  // ج) معالجة أزرار التحكم داخل التكت
   if (interaction.isButton()) {
     const channelId = interaction.channel.id;
     const ticket = db.tickets?.[channelId];
@@ -279,51 +244,6 @@ client.on('interactionCreate', async interaction => {
     if (interaction.customId === 'ping_owner') {
       await interaction.reply({ content: `🔔 تنبيه ونداء عاجل لصاحب التذكرة المتأخر: <@${ticket.ownerId}>` });
     }
-  }
-});
-
-// [6] كاونتر احتساب رسائل الأعضاء التلقائي مع ترقية الليفلات وحفظ الرتب القديمة
-client.on('messageCreate', async message => {
-  if (message.author.bot || !message.guild) return;
-
-  const db = getDB();
-  const guildId = message.guild.id;
-  const userId = message.author.id;
-
-  if (!db.userMessages) db.userMessages = {};
-  if (!db.userMessages[guildId]) db.userMessages[guildId] = {};
-  if (!db.userMessages[guildId][userId]) db.userMessages[guildId][userId] = 0;
-
-  db.userMessages[guildId][userId] += 1;
-  const currentCount = db.userMessages[guildId][userId];
-  saveDB(db);
-
-  // التحقق والتحجيم التلقائي لليفلات الرتب الـ 10
-  const serverLevelConfig = db.levelConfig?.[guildId];
-  if (serverLevelConfig && serverLevelConfig.roles && serverLevelConfig.roles.length > 0) {
-    let eligibleRoleInfo = null;
-    for (const rInfo of serverLevelConfig.roles) {
-      if (currentCount >= rInfo.requiredMessages) eligibleRoleInfo = rInfo;
-    }
-
-    if (eligibleRoleInfo) {
-      const targetRole = message.guild.roles.cache.get(eligibleRoleInfo.roleId);
-      if (targetRole && !message.member.roles.cache.has(targetRole.id)) {
-        try {
-          await message.member.roles.add(targetRole);
-          const logChannel = message.guild.channels.cache.get(serverLevelConfig.channelId);
-          if (logChannel) {
-            await logChannel.send({ content: `🎉 تهانينا الحارة ${message.author}! لقد تخطيت حاجز \`${eligibleRoleInfo.requiredMessages}\` رسالة وحصلت على رتبة التميز الفخرية: **${targetRole.name}**! (وتم الاحتفاظ بكافة رتبك السابقة كاملة 💾).` });
-          }
-        } catch (err) { console.error('Level Up Role Error:', err); }
-      }
-    }
-  }
-
-  // نظام الردود التلقائية الذكية
-  const text = message.content.trim().toLowerCase();
-  if (db.replies?.[guildId]?.[text]) {
-    return message.reply({ content: `${db.replies[guildId][text]}` });
   }
 });
 
