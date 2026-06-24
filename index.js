@@ -18,7 +18,8 @@ const {
   ButtonBuilder, 
   ButtonStyle, 
   StringSelectMenuBuilder,
-  ChannelType 
+  ChannelType,
+  SlashCommandBuilder // تم إضافتها هنا بشكل صحيح ومضمون
 } = require('discord.js');
 const fs = require('fs');
 const http = require('http');
@@ -42,7 +43,7 @@ const client = new Client({
   ]
 });
 
-// جلب التوكن وآيدي البوت (تأكد من كتابة اسم الكي صح بالـ Environment)
+// جلب التوكن وآيدي البوت
 const TOKEN = process.env.TOKEN; 
 const CLIENT_ID = "1254845579979329618"; 
 
@@ -273,7 +274,6 @@ client.on('interactionCreate', async interaction => {
     }
 
     if (interaction.customId === 'close_ticket') {
-      // حظر منع العضو العادي نهائياً من ضغط زر الإغلاق
       if (!hasAdmin && !hasTicketRole) return interaction.reply({ content: '❌ خطأ أمني: زر الإغلاق مخصص حصرياً لطاقم الإدارة المسؤول فقط!', ephemeral: true });
       
       ticket.status = 'closed'; saveDB(db);
@@ -315,7 +315,6 @@ client.on('messageCreate', async message => {
       const targetRole = message.guild.roles.cache.get(eligibleRoleInfo.roleId);
       if (targetRole && !message.member.roles.cache.has(targetRole.id)) {
         try {
-          // إعطاء الرتبة الجديدة مع بقاء الرتب القديمة دون مسح تقديراً للتفاعل
           await message.member.roles.add(targetRole);
           const logChannel = message.guild.channels.cache.get(serverLevelConfig.channelId);
           if (logChannel) {
@@ -326,7 +325,7 @@ client.on('messageCreate', async message => {
     }
   }
 
-  // نظام الردود التلقائية الذكية المبرمجة سابقاً
+  // نظام الردود التلقائية الذكية
   const text = message.content.trim().toLowerCase();
   if (db.replies?.[guildId]?.[text]) {
     return message.reply({ content: `${db.replies[guildId][text]}` });
