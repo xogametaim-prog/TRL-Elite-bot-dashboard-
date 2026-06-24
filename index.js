@@ -1,193 +1,231 @@
 const { 
-  Client, GatewayIntentBits, EmbedBuilder, ActionRowBuilder, 
-  ButtonBuilder, ButtonStyle, ChannelType, PermissionFlagsBits, 
-  StringSelectMenuBuilder, StringSelectMenuOptionBuilder 
+    Client, 
+    GatewayIntentBits, 
+    ActionRowBuilder, 
+    StringSelectMenuBuilder, 
+    StringSelectMenuOptionBuilder, 
+    EmbedBuilder, 
+    ButtonBuilder, 
+    ButtonStyle, 
+    PermissionFlagsBits, 
+    ChannelType,
+    REST,
+    Routes
 } = require('discord.js');
-const http = require('http');
-const axios = require('axios');
+const express = require('express');
 
-// قراءة التوكن مباشرة من إعدادات ريندر بأمان
-const token = process.env.DISCORD_TOKEN;
+// إعداد خادم ويب لتفادي توقف البوت على منصة Render
+const app = express();
+const PORT = process.env.PORT || 3000;
+app.get('/', (req, res) => res.send('Bot is running!'));
+app.listen(PORT, () => console.log(`Server listening on port ${PORT}`));
 
 const client = new Client({
-  intents: [
-    GatewayIntentBits.Guilds,
-    GatewayIntentBits.GuildMessages,
-    GatewayIntentBits.MessageContent
-  ]
+    intents: [
+        GatewayIntentBits.Guilds,
+        GatewayIntentBits.GuildMessages,
+        GatewayIntentBits.MessageContent
+    ]
 });
 
-// حفظ مؤقت للرتبة المسؤولة عن التيكت في السيرفر
-let ticketStaffRole = {}; 
+// ==================== إعدادات الخيارات الخمسة والرتب ====================
+const TICKET_CONFIG = {
+    // ضع هنا أيدي القسم (Category) الذي تفتح فيه التذاكر (اختياري)
+    // إذا لم تكن تريد قسماً معيناً، اتركها فارغة ''
+    categoryID: 'ايدي_قسم_التذاكر_هنا', 
 
-client.once('ready', () => {
-  console.log(`🤖 تم تشغيل البوت بنجاح باسم: ${client.user.tag}`);
-  
-  // 1. إنشاء الـ Web Service لـ Render ولـ UptimeRobot
-  const server = http.createServer((req, res) => {
-    res.writeHead(200, { 'Content-Type': 'text/plain; charset=utf-8' });
-    res.end('Zone Ticket Bot is active 24/7! (Anti-Sleep Triggered)');
-  });
+    options: [
+        {
+            value: 'option_1',
+            label: 'الدعم الفني والتقني', // النص الذي يظهر في الخيار الأول
+            description: 'للمشاكل البرمجية والتقنية داخل السيرفر', // الوصف
+            emoji: '🛠️', // الإيموجي
+            roleId: 'ايدي_رتبة_الدعم_الفني_هنا', // أيدي الرتبة التي تستلم هذه التذكرة
+        },
+        {
+            value: 'option_2',
+            label: 'الاستفسارات العامة', // الخيار الثاني
+            description: 'لأي سؤال عام تود طرحه على الإدارة',
+            emoji: '❓',
+            roleId: 'ايدي_رتبة_الاستفسارات_هنا', 
+        },
+        {
+            value: 'option_3',
+            label: 'الشكاوى والبلاغات', // الخيار الثالث
+            description: 'لتقديم شكوى ضد عضو أو الإبلاغ عن مشكلة',
+            emoji: '⚠️',
+            roleId: 'ايدي_رتبة_الشكاوى_هنا', 
+        },
+        {
+            value: 'option_4',
+            label: 'المبيعات والاشتراكات', // الخيار الرابع
+            description: 'للاستفسار عن الأسعار أو الشراء المباشر',
+            emoji: '💰',
+            roleId: 'ايدي_رتبة_المبيعات_هنا', 
+        },
+        {
+            value: 'option_5',
+            label: 'الإدارة العليا', // الخيار الخامس
+            description: 'للتواصل المباشر والحالات الخاصة جداً',
+            emoji: '👑',
+            roleId: 'ايدي_رتبة_الإدارة_العليا_هنا', 
+        }
+    ]
+};
+// ====================================================================
 
-  const PORT = process.env.PORT || 3000;
-  server.listen(PORT, () => {
-    console.log(`🌐 الويب سيرفر شغال على المنفذ: ${PORT}`);
+const TOKEN = process.env.TOKEN;
+const CLIENT_ID = process.env.CLIENT_ID;
+
+client.once('ready', async () => {
+    console.log(`Logged in as ${client.user.tag}`);
     
-    // 2. خدعة الـ Self-Ping: البوت "يضحك" على ريندر ويرسل طلب لنفسه كل 5 دقائق
-    // ملاحظة: ريندر يغلق الويب سيرفس إذا مرت 15 دقيقة بدون أي حركّة
-    setInterval(async () => {
-      try {
-        // إذا كنت تملك رابط .onrender.com الخاص بك وضعه هنا، أو دعه يكتشف المنفذ المحلي تلقائياً
-        const appUrl = process.env.RENDER_EXTERNAL_URL || `http://localhost:${PORT}`;
-        await axios.get(appUrl);
-        console.log('⏰ [Self-Ping] تم تنشيط البوت ذاتياً بنجاح لمنع وضع النوم!');
-      } catch (error) {
-        console.log('⚠️ [Self-Ping] فشل التنشيط الذاتي المؤقت (لا تقلق السيرفر يعمل):', error.message);
-      }
-    }, 5 * 60 * 1000); // كل 5 دقائق بالضبط
-  });
+    // تسجيل أمر سلاش لإرسال رسالة التذاكر في القناة المطلوبة
+    const commands = [
+        {
+            name: 'setup-ticket',
+            description: 'إنشاء رسالة نظام التذاكر بالقائمة المنسدلة'
+        }
+    ];
+
+    const rest = new REST({ version: '10' }).setToken(TOKEN);
+
+    try {
+        console.log('Registering slash commands...');
+        await rest.put(
+            Routes.applicationCommands(CLIENT_ID),
+            { body: commands },
+        );
+        console.log('Successfully registered commands.');
+    } catch (error) {
+        console.error(error);
+    }
 });
 
+// التعامل مع التفاعلات والأوامر
 client.on('interactionCreate', async interaction => {
-  
-  // تشغيل أوامر السلاش
-  if (interaction.isChatInputCommand()) {
-    const { commandName } = interaction;
+    // 1. عند كتابة الأمر /setup-ticket
+    if (interaction.isChatInputCommand()) {
+        if (interaction.commandName === 'setup-ticket') {
+            // التحقق من صلاحيات المدير
+            if (!interaction.member.permissions.has(PermissionFlagsBits.Administrator)) {
+                return interaction.reply({ content: 'عذراً، هذا الأمر مخصص للإداريين فقط.', ephemeral: true });
+            }
 
-    if (commandName === 'setup-ticket') {
-      const title = interaction.options.getString('title');
-      const description = interaction.options.getString('description');
-      const buttonText = interaction.options.getString('button_text');
-      const staffRole = interaction.options.getRole('staff_role');
+            const embed = new EmbedBuilder()
+                .setTitle('الدعم الفني | Support')
+                .setDescription('مرحباً بك في نظام الدعم الفني الخاص بنا.\nيرجى تحديد القسم المناسب لمشكلتك من القائمة المنسدلة أدناه لفتح تذكرة مباشرة مع الطاقم المختص.')
+                .setColor('#2b2d31');
 
-      ticketStaffRole[interaction.guildId] = staffRole.id;
+            const selectMenu = new StringSelectMenuBuilder()
+                .setCustomId('ticket_menu_select')
+                .setPlaceholder('الرجاء اختيار قسم لفتح التذكرة...')
+                .addOptions(
+                    TICKET_CONFIG.options.map(opt => 
+                        new StringSelectMenuOptionBuilder()
+                            .setValue(opt.value)
+                            .setLabel(opt.label)
+                            .setDescription(opt.description)
+                            .setEmoji(opt.emoji)
+                    )
+                );
 
-      // الإمبد الرئيسي لنظام التيكت مع الخلفية الخضراء التكنولوجية المستطيلة V1.0
-      const embed = new EmbedBuilder()
-        .setTitle(title)
-        .setDescription(description)
-        .setColor('#00ff88')
-        .setImage('https://i.imgur.com/v8S7z8z.png') 
-        .setFooter({ text: 'Welcome to Zone Members Support!', iconURL: interaction.guild.iconURL() });
+            const row = new ActionRowBuilder().addComponents(selectMenu);
 
-      // قائمة الاختيار مطابقة للصورة تماماً
-      const selectMenu = new StringSelectMenuBuilder()
-        .setCustomId('ticket_select')
-        .setPlaceholder('Choose an option...')
-        .addOptions(
-          new StringSelectMenuOptionBuilder()
-            .setLabel(buttonText)
-            .setDescription('اضغط هنا لفتح تذكرة دعم فني جديدة')
-            .setValue('open_ticket')
-            .setEmoji('🎫'),
-          new StringSelectMenuOptionBuilder()
-            .setLabel('Rest / Reset')
-            .setDescription('إعادة تعيين وإلغاء الاختيار المفتوح')
-            .setValue('reset_select')
-            .setEmoji('🔄')
-        );
-
-      const row = new ActionRowBuilder().addComponents(selectMenu);
-
-      await interaction.reply({ content: '✅ تم إنشاء لوحة التذاكر الاحترافية بنجاح!', ephemeral: true });
-      await interaction.channel.send({ embeds: [embed], components: [row] });
-    }
-
-    if (commandName === 'embed') {
-      const title = interaction.options.getString('title');
-      const description = interaction.options.getString('description');
-      const imageUrl = interaction.options.getString('image_url');
-      const color = interaction.options.getString('color') || '#00ff88';
-
-      const customEmbed = new EmbedBuilder()
-        .setTitle(title)
-        .setDescription(description)
-        .setColor(color.startsWith('#') ? color : `#${color}`);
-
-      if (imageUrl) customEmbed.setImage(imageUrl);
-
-      await interaction.reply({ content: '✅ تم إرسال الإمبد المخصص بنجاح.', ephemeral: true });
-      await interaction.channel.send({ embeds: [customEmbed] });
-    }
-  }
-
-  // معالجة فتح التيكت عند الاختيار من القائمة
-  if (interaction.isStringSelectMenu()) {
-    if (interaction.customId === 'ticket_select') {
-      if (interaction.values[0] === 'reset_select') {
-        return interaction.reply({ content: '🔄 تم إلغاء الاختيار بنجاح.', ephemeral: true });
-      }
-
-      if (interaction.values[0] === 'open_ticket') {
-        const staffRoleId = ticketStaffRole[interaction.guildId];
-        if (!staffRoleId) {
-          return interaction.reply({ content: '❌ خطأ: يرجى إعداد النظام أولاً باستخدام الأمر `/setup-ticket` لتحديد الرتبة.', ephemeral: true });
+            await interaction.reply({ content: 'تم إرسال نظام التذاكر بنجاح!', ephemeral: true });
+            await interaction.channel.send({ embeds: [embed], components: [row] });
         }
-
-        await interaction.deferReply({ ephemeral: true });
-
-        // إنشاء روم التيكت (العضو مسموح له إرسال الصور والملفات AttachFiles)
-        const ticketChannel = await interaction.guild.channels.create({
-          name: `ticket-${interaction.user.username}`,
-          type: ChannelType.GuildText,
-          permissionOverwrites: [
-            { id: interaction.guild.roles.everyone.id, deny: [PermissionFlagsBits.ViewChannel] },
-            { id: interaction.user.id, allow: [PermissionFlagsBits.ViewChannel, PermissionFlagsBits.SendMessages, PermissionFlagsBits.AttachFiles] }, 
-            { id: staffRoleId, allow: [PermissionFlagsBits.ViewChannel, PermissionFlagsBits.SendMessages, PermissionFlagsBits.AttachFiles] }
-          ]
-        });
-
-        // رسالة الإمبد داخل التيكت مع اللوجو الدائري الأخضر V1.0
-        const ticketEmbed = new EmbedBuilder()
-          .setTitle('الدعم الفني | Technical Support')
-          .setDescription(`أهلاً بك ${interaction.user} في تذكرتك المفتوحة.\nيرجى كتابة مشكلتك أو إرسال صور الدعم هنا، وسيقوم فريق الإدارة بالرد عليك قريباً.\n\n**الرتبة المسؤولة:** <@&${staffRoleId}>`)
-          .setColor('#00ff88')
-          .setThumbnail('https://i.imgur.com/7gK7N9Z.png') 
-          .setTimestamp();
-
-        const buttonsRow = new ActionRowBuilder().addComponents(
-          new ButtonBuilder().setCustomId('claim_ticket').setLabel('استلام التذكرة (Staff)').setStyle(ButtonStyle.Success).setEmoji('🙋‍♂️'),
-          new ButtonBuilder().setCustomId('close_ticket').setLabel('إغلاق التذكرة (Staff)').setStyle(ButtonStyle.Danger).setEmoji('🔒')
-        );
-
-        await ticketChannel.send({ content: `${interaction.user} | <@&${staffRoleId}>`, embeds: [ticketEmbed], components: [buttonsRow] });
-        await interaction.editReply({ content: `✅ تم فتح تذكرتك بنجاح: ${ticketChannel}` });
-      }
-    }
-  }
-
-  // التحكم بالحماية والأزرار (منع العضو والسماح للادارة فقط)
-  if (interaction.isButton()) {
-    const staffRoleId = ticketStaffRole[interaction.guildId];
-
-    // نظام الأمان: إذا العضو ضغط على زر الاستلام أو الإغلاق يرفضه فوراً وممنوع يتحكم
-    if (!interaction.member.roles.cache.has(staffRoleId)) {
-      return interaction.reply({ content: '❌ عذراً، هذه الأزرار مخصصة لطاقم الدعم الفني فقط وممنوع استخدامها من قبل الأعضاء.', ephemeral: true });
     }
 
-    // زر استلام التيكت
-    if (interaction.customId === 'claim_ticket') {
-      await interaction.reply({ content: `👋 تم استلام هذه التذكرة بواسطة الإداري: ${interaction.user}` });
-      
-      const disabledRow = new ActionRowBuilder().addComponents(
-        new ButtonBuilder().setCustomId('claim_ticket').setLabel('تم الاستلام').setStyle(ButtonStyle.Secondary).setDisabled(true),
-        new ButtonBuilder().setCustomId('close_ticket').setLabel('إغلاق التذكرة').setStyle(ButtonStyle.Danger)
-      );
-      await interaction.message.edit({ components: [disabledRow] });
-    }
+    // 2. عند اختيار قسم من القائمة المنسدلة
+    if (interaction.isStringSelectMenu()) {
+        if (interaction.customId === 'ticket_menu_select') {
+            await interaction.deferReply({ ephemeral: true });
 
-    // زر إغلاق التيكت وحذف الروم
-    if (interaction.customId === 'close_ticket') {
-      await interaction.reply({ content: '🔒 تم طلب إغلاق التذكرة، سيتم حذف الروم نهائياً بعد 5 ثوانٍ...' });
-      setTimeout(async () => {
-        try {
-          await interaction.channel.delete();
-        } catch (err) {
-          console.log('خطأ أثناء حذف قناة التيكت:', err);
+            const selectedValue = interaction.values[0];
+            const selectedOption = TICKET_CONFIG.options.find(opt => opt.value === selectedValue);
+
+            if (!selectedOption) {
+                return interaction.editReply({ content: 'عذراً، حدث خطأ في معالجة طلبك.' });
+            }
+
+            const guild = interaction.guild;
+            const member = interaction.member;
+
+            // تحديد الصلاحيات الافتراضية للتذكرة
+            const permissionOverwrites = [
+                {
+                    id: guild.id, // للجميع (اخفاء القناة)
+                    deny: [PermissionFlagsBits.ViewChannel],
+                },
+                {
+                    id: member.id, // للعضو فتح التذكرة (إظهار وإمكانية الكتابة)
+                    allow: [PermissionFlagsBits.ViewChannel, PermissionFlagsBits.SendMessages, PermissionFlagsBits.ReadMessageHistory],
+                }
+            ];
+
+            // إضافة رتبة الدعم المحددة لهذا القسم إلى الصلاحيات
+            if (selectedOption.roleId) {
+                permissionOverwrites.push({
+                    id: selectedOption.roleId,
+                    allow: [PermissionFlagsBits.ViewChannel, PermissionFlagsBits.SendMessages, PermissionFlagsBits.ReadMessageHistory],
+                });
+            }
+
+            try {
+                // إنشاء القناة
+                const channel = await guild.channels.create({
+                    name: `ticket-${selectedOption.value}-${member.user.username}`,
+                    type: ChannelType.GuildText,
+                    parent: TICKET_CONFIG.categoryID || null,
+                    permissionOverwrites: permissionOverwrites
+                });
+
+                // إرسال رسالة الترحيب بداخل التذكرة
+                const welcomeEmbed = new EmbedBuilder()
+                    .setTitle(`تذكرة جديدة - ${selectedOption.label}`)
+                    .setDescription(`أهلاً بك ${member}، لقد قمت بفتح تذكرة في قسم **${selectedOption.label}**.\nيرجى كتابة استفسارك أو مشكلتك هنا وسيقوم فريق العمل بالرد عليك قريباً.`)
+                    .setColor('#5865F2')
+                    .setTimestamp();
+
+                const closeButton = new ButtonBuilder()
+                    .setCustomId('close_ticket_btn')
+                    .setLabel('إغلاق التذكرة')
+                    .setStyle(ButtonStyle.Danger)
+                    .setEmoji('🔒');
+
+                const row = new ActionRowBuilder().addComponents(closeButton);
+
+                // منشن العضو والرتبة المسؤولة
+                const supportRoleMention = selectedOption.roleId ? `<@&${selectedOption.roleId}>` : '';
+                await channel.send({ 
+                    content: `${member} ${supportRoleMention}`, 
+                    embeds: [welcomeEmbed], 
+                    components: [row] 
+                });
+
+                await interaction.editReply({ content: `تم إنشاء تذكرتك بنجاح: ${channel}` });
+
+            } catch (error) {
+                console.error('Error creating ticket:', error);
+                await interaction.editReply({ content: 'حدث خطأ أثناء محاولة إنشاء التذكرة. تأكد من إعطاء البوت الصلاحيات الكافية (إدارة القنوات وإدارة الرتب).' });
+            }
         }
-      }, 5000);
     }
-  }
+
+    // 3. عند الضغط على زر إغلاق التذكرة
+    if (interaction.isButton()) {
+        if (interaction.customId === 'close_ticket_btn') {
+            await interaction.reply({ content: 'سيتم حذف وإغلاق هذه التذكرة خلال 5 ثوانٍ...' });
+            setTimeout(async () => {
+                try {
+                    await interaction.channel.delete();
+                } catch (err) {
+                    console.error('Error deleting channel:', err);
+                }
+            }, 5000);
+        }
+    }
 });
 
-client.login(token);
+client.login(TOKEN);
