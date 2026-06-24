@@ -28,11 +28,9 @@ const server = http.createServer((req, res) => {
   res.writeHead(200, { 'Content-Type': 'text/plain' });
   res.end('TRL.dev System Bot Is Fully Operational and Live! 🚀\n');
 });
-server.listen(process.env.PORT || 3000, () => {
-  console.log('🌐 Web Server generated for Render uptime.');
-});
+server.listen(process.env.PORT || 3000);
 
-// [2] إعداد الجلسة وتفعيل الـ Intents الأساسية لقراءة السيرفرات والأعضاء
+// [2] إعداد الجلسة وتفعيل الـ Intents الأساسية
 const client = new Client({
   intents: [
     GatewayIntentBits.Guilds,
@@ -41,11 +39,11 @@ const client = new Client({
   ]
 });
 
-// جلب التوكن وآيدي البوت من البيئة (Environment Variables)
+// جلب التوكن من الـ Environment Variables في ريندر وآيدي البوت الثابت
 const TOKEN = process.env.TOKEN; 
 const CLIENT_ID = "1254845579979329618"; 
 
-// دالة جلب وحفظ البيانات من ملف db.json بشكل آمن للـ Tickets فقط
+// دالة جلب وحفظ البيانات من ملف db.json بشكل آمن للـ Tickets
 function getDB() { 
   try {
     return JSON.parse(fs.readFileSync('./db.json', 'utf8')); 
@@ -55,8 +53,8 @@ function getDB() {
 }
 function saveDB(db) { fs.writeFileSync('./db.json', JSON.stringify(db, null, 2)); }
 
-// [3] بناء مصفوفة الأوامر باستخدام SlashCommandBuilder وتحويلها لـ JSON عند الإرسال فقط
-const commands = [
+// [3] بناء مصفوفة الأوامر (تكت، إيمبد، ومعلوماتك)
+const commandsData = [
   new SlashCommandBuilder()
     .setName('setup-ticket')
     .setDescription('إعداد لوحة التكتات بقائمة منسدلة احترافية مع دعم الصور')
@@ -76,27 +74,18 @@ const commands = [
   new SlashCommandBuilder()
     .setName('info')
     .setDescription('عرض ملف المطور الشخصي لـ تيم والمعلومات الأساسية لـ TRL.dev')
-];
+].map(cmd => cmd.toJSON());
 
-// [4] حدث إقلاع البوت وتحديث الأوامر وتنظيف القديم تلقائياً
+// [4] حدث إقلاع البوت وتنظيف الكاش القديم للأوامر وتحديث الجديد فوراً
 client.once('ready', async () => {
   console.log(`✨ [TRL.dev] Connected successfully as: ${client.user.tag}`);
   const rest = new REST({ version: '10' }).setToken(TOKEN);
   try {
-    console.log('⏳ Cleaning old commands and syncing new ones...');
-    
-    // تحويل المصفوفة إلى JSON أثناء التسجيل الفعلي
-    const commandsJSON = commands.map(cmd => cmd.toJSON());
-    
-    await rest.put(
-      Routes.applicationCommands(CLIENT_ID),
-      { body: commandsJSON }
-    );
-    
+    console.log('⏳ Synchronizing global slash commands...');
+    // تمرير مصفوفة الأوامر الجديدة مباشرة يجبر ديسكورد على مسح أي أمر قديم مش موجود فيها
+    await rest.put(Routes.applicationCommands(CLIENT_ID), { body: commandsData });
     console.log('🎉 Registered Ticket & Embed Commands Perfectly!');
-  } catch (error) { 
-    console.error('❌ Sync Error:', error); 
-  }
+  } catch (error) { console.error('❌ Sync Error:', error); }
 });
 
 // [5] استقبال التفاعلات (أوامر السلاش، القوائم المنسدلة، أزرار التكتات)
@@ -104,7 +93,7 @@ client.on('interactionCreate', async interaction => {
   const db = getDB();
   const guildId = interaction.guild?.id;
 
-  // أ) معالجة أوامر السلاش التنفيذية مع نظام الحماية الصارم
+  // أ) معالجة أوامر السلاش التنفيذية
   if (interaction.isChatInputCommand()) {
     const hasAdmin = interaction.member.permissions.has(PermissionFlagsBits.Administrator);
     const hasControlRole = interaction.member.roles.cache.some(r => r.name === 'System Control');
@@ -113,7 +102,7 @@ client.on('interactionCreate', async interaction => {
       return interaction.reply({ content: '❌ عذراً! هذا الأمر مخصص فقط للإدارة العليا أو لمن يمتلك رتبة `System Control`.', ephemeral: true });
     }
 
-    // أمر الـ setup-ticket المطور بالقوائم والصور
+    // أمر الـ setup-ticket
     if (interaction.commandName === 'setup-ticket') {
       const title = interaction.options.getString('title');
       const desc = interaction.options.getString('description');
@@ -146,7 +135,7 @@ client.on('interactionCreate', async interaction => {
       return interaction.reply({ content: '✅ تم إنشاء لوحة التكتات المنسدلة بنجاح فائق!', ephemeral: true });
     }
 
-    // أمر الإيمبد والصور العام للادارة
+    // أمر الإيمبد
     if (interaction.commandName === 'embed') {
       const embed = new EmbedBuilder()
         .setTitle(interaction.options.getString('title'))
@@ -175,7 +164,7 @@ client.on('interactionCreate', async interaction => {
     }
   }
 
-  // ب) فتح التذكرة الذكية عند الاختيار من القائمة المنسدلة للأعضاء
+  // ب) فتح التذكرة الذكية عند الاختيار من القائمة المنسدلة
   if (interaction.isStringSelectMenu() && interaction.customId.startsWith('ticket_select_')) {
     const userId = interaction.user.id;
     const selectedValue = interaction.values[0];
