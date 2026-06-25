@@ -7,10 +7,11 @@ const {
     ButtonStyle, 
     PermissionFlagsBits, 
     ChannelType,
-    MessageFlags
+    MessageFlags,
+    Events
 } = require('discord.js');
 const express = require('express');
-const { createCanvas, loadImage } = require('@napi-rs/canvas'); // مكتبة سريعة وخفيفة جداً للرسم برمجياً دون تعليق ريندر
+const { createCanvas, loadImage } = require('@napi-rs/canvas'); // استخدام Skia السريع للرسم برمجياً دون بطء
 
 const app = express();
 const PORT = process.env.PORT || 3000;
@@ -26,7 +27,7 @@ const client = new Client({
     ]
 });
 
-// الاختصارات والأوامر الأساسية لروكيت ليق
+// الاختصارات والأوامر الأساسية المحددة من قبلك
 const PREFIX = '-';
 const CREATE_ROOM_PREFIX = '-rm';
 const WELCOME_SETUP_PREFIX = '-wel';
@@ -35,26 +36,13 @@ const LOG_MESSAGES_PREFIX = '-lgm';
 const BROADCAST_PREFIX = '-t';
 const HELP_PREFIX = '-hp';
 
-// لوقات دخول وخروج الأعضاء والرتب التلقائية
-let welcomeChannelId = null;     // -wel
-let picOnlyChannelId = null;     // -puc
-let logMessagesChannelId = null; // -lgm
-let logWelcomeChannelId = null;  // -lgwelcome
-let logByeChannelId = null;      // -lgbye
-
-let autoRoleMemberId = null;     // -gm
-let autoRoleBotId = null;        // -gb
-
-let questionInterval = null;     // التحكم في الإرسال التلقائي للأسئلة
-const userWarns = new Map();     // تتبع المخالفين في شات الصور
-
-// أسئلة روكيت ليق التفاعلية (أكثر من 45 سؤالاً عشوائياً ممتازاً)
+// أسئلة روكيت ليق التلقائية (أكثر من 45 سؤالاً عشوائياً وتكتيكياً)
 const ROCKET_LEAGUE_QUESTIONS = [
     "🏎️ ما هي سيارتك المفضلة للعب التنافسي في روكيت ليق؟",
     "⚽ ما هو أعلى رتبة (Rank) وصلت إليها في اللعبة حتى الآن؟",
     "💥 هل تفضل استراتيجية تفجير الخصوم (Demos) أم تفضل الدفاع الهادئ؟",
     "🔥 ما هو رأيك في خريطة Wasteland الجديدة التنافسية؟",
-    "🎩 ما هي القبعة (Topper) الأكثر تميزاً في حسابك؟",
+    "🎩 ما هي القبعة (Topper) الأكثر تميزاً في حسابك? ",
     "⚡ كم نسبة نجاحك في القيام بحركة الـ Double Tap؟",
     "🚀 هل تتقن الـ Air Dribble أم لا زلت تتدرب عليها؟",
     "🎮 هل تلعب باستخدام الكنترولر (يد التحكم) أم الكيبورد والماوس؟",
@@ -72,7 +60,7 @@ const ROCKET_LEAGUE_QUESTIONS = [
     "🌋 هل تفضل اللعب في الخرائط الليلية أم الخرائط النهارية؟",
     "🎒 ما هو الغرض الأكثر طلباً للتجارة (Trading) في حسابك؟",
     "⚡ ما هي أفضل طريقة برأيك لجمع الـ Boost بسرعة أثناء اللعب؟",
-    "🥅 ما هي ردة فعلك عندما يقوم زميلك في الفريق بـ Goal عكسي؟",
+    "🥅 ما هي ردة فعلك عندما يقوم زميلك في الفريق بـ Own Goal (هدف عكسي)؟",
     "🏎️ هل تمتلك سيارة الـ Batmobile وهل تفضل اللعب بها؟",
     "🌟 ما هو هدفك الأساسي في الموسم الحالي من روكيت ليق؟",
     "🎈 هل تلعب نمط Rumble الترفيهي أم تفضل الأنماط الكلاسيكية فقط؟",
@@ -86,53 +74,103 @@ const ROCKET_LEAGUE_QUESTIONS = [
     "🔥 تكتيك: هل تفضل البقاء خلف زميلك (Rotation) أم الضغط الثنائي الدائم؟",
     "💥 هل تعتمد على الشات السريع (Quick Chat) لتوجيه فريقك أم تفضل الصمت؟",
     "🚗 ما هو العشب المفضلة لديك في ملاعب روكيت ليق؟",
-    "🏆 هل شاركت في بطولات روكيت ليق الرسمية داخل اللعبة؟",
+    "🏆 هل شاركت في بطولات روكيت ليق الرسمية داخل اللعبة (Tournaments)؟",
     "🌟 ما هو اللقب (Title) المفضل لديك المعلق تحت اسمك في اللعبة؟",
     "💨 هل تؤيد إلغاء ميزة الـ Trading الرسمية التي حدثت في اللعبة؟",
     "🌀 ما هي أفضل لقطة (Clip) قمت بتسجيلها في مسيرتك باللعبة؟",
-    "🎮 هل تفضل اللعب مع الأصدقاء بالصوت أم اللعب الفردي التام؟",
+    "🎮 هل تفضل اللعب مع الأصدقاء بالصوت (Voice Chat) أم اللعب الفردي التام؟",
     "🛡️ ما هو أفضل كوستومايز (تصميم سيارة) قمت بتركيبه حتى الآن؟",
     "🔥 هل تستخدم الـ Rocket Pass وهل يستحق الشراء دائماً؟",
-    "⚽ كم مرة قمت بإنقاذ تاريخي في اللحظة الأخيرة اليوم؟",
+    "⚽ كم مرة قمت بإنقاذ تاريخي في اللحظة الأخيرة (Epic Save) اليوم؟",
     "🏆 لو واجهت فريقاً محترفاً، ما هو التكتيك الذي ستعتمده للفوز؟"
 ];
+
+// قنوات ومفاتيح التحكم والتشغيل (تم تعريفها بدقة لمنع الـ ReferenceError)
+let welcomeChannelId = null;     
+let picOnlyChannelId = null;     
+let logMessagesChannelId = null; 
+let logWelcomeChannelId = null;  
+let logByeChannelId = null;      
+
+let autoRoleMemberId = null;     
+let autoRoleBotId = null;        
+
+let questionInterval = null;     
+const userWarns = new Map();     
+
+// تم تعريف الذاكرة المؤقتة المفقودة التي تسببت في توقف البوت
+const dmSetup = new Map();
 
 const TOKEN = process.env.TOKEN;
 const CLIENT_ID = process.env.CLIENT_ID;
 
-// دالة توليد بطاقة ترحيبية مرسومة برمجياً باسم العضو وصورته الشخصية بدقة فائقة وسرعة تامة
+client.once('ready', async () => {
+    console.log(`Rocket League Bot logged in as ${client.user.tag}`);
+});
+
+// دالة المساعدة المحدثة بالكامل
+function getHelpEmbed() {
+    return new EmbedBuilder()
+        .setTitle('🏎️ دليل أوامر واختصارات بوت روكيت ليق الكامل')
+        .setDescription('مرحباً بك! إليك جميع الاختصارات المخصصة بالكامل لإدارة وتنظيم سيرفر روكيت ليق الخاص بك بسهولة:')
+        .setColor('#e67e22')
+        .addFields(
+            { name: '⚙️ أولاً: اختصارات الرومات والصلاحيات المخصصة', value:
+                `**-rm [اسم الروم]** : لإنشاء روم نصي جديد يأخذ صلاحيات الـ \`@everyone\` من الروم الحالي فوراً دون نسخ رتب.\n` +
+                `**-wel [#القناة]** : لتحديد قناة الترحيب التلقائي بالصور المبتكرة للأعضاء.\n` +
+                `**-puc** : يكتب داخل الروم التي تود تحويلها لـ **(روم صور فقط)**؛ ليقوم بمسح أي رسائل نصية عادية تلقائياً.\n` +
+                `**-lgm [#القناة]** : لتحديد قناة السجلات الخاصة بتخريب شات الصور (في حال أرسل عضو أكثر من 5 رسائل نصية).`
+            },
+            { name: '📂 ثانياً: اختصارات سجلات الدخول والخروج والرتب التلقائية', value:
+                `**-lgwelcome [#القناة]** : لتحديد روم لوقات دخول الأعضاء الجدد وتوثيق بيانات حساباتهم بدقة.\n` +
+                `**-lgbye [#القناة]** : لتحديد روم لوقات خروج ومغادرة الأعضاء من السيرفر.\n` +
+                `**-gm [أيدي الرتبة]** : لتحديد رتبة تلقائية يتم منحها فوراً لأي عضو حقيقي يدخل السيرفر.\n` +
+                `**-gb [أيدي الرتبة]** : لتحديد رتبة تلقائية يتم منحها فوراً لأي بوت يدخل السيرفر.`
+            },
+            { name: '⚽ ثالثاً: اختصارات أسئلة روكيت ليق التلقائية والعشوائية', value:
+                `**-sn** : لتشغيل نظام البث والإرسال التلقائي للأسئلة العشوائية والممتعة في الشات.\n` +
+                `**-snp** : لإيقاف نظام الإرسال التلقائي للأسئلة العشوائية فوراً.\n` +
+                `**-s** : لإرسال سؤال عشوائي وتحدي واحد فوراً في الشات لتجربة التفاعل.\n` +
+                `**-t** : لبدء برودكاست جماعي فائق السرعة والآمن لجميع الأعضاء بالخاص مع الـ Rate limit لتفادي الباند.\n` +
+                `**-hp** : لعرض دليل المساعدة والشرح الموحد الماثل أمامك الآن.`
+            }
+        )
+        .setTimestamp();
+}
+
+// دالة توليد بطاقة ترحيبية مبتكرة باستخدام Canvas (Skia Backend)
 async function generateWelcomeImage(member) {
     const canvas = createCanvas(700, 250);
     const ctx = canvas.getContext('2d');
 
-    // رسم الخلفية
-    ctx.fillStyle = '#23272a';
+    // 1. رسم خلفية ملوّنة أنيقة
+    ctx.fillStyle = '#2b2d31';
     ctx.fillRect(0, 0, canvas.width, canvas.height);
 
-    // رسم إطار ملوّن أنيق بحدود مائلة
+    // إضافة تدرج لوني جمالي في الحواف
     const gradient = ctx.createLinearGradient(0, 0, 700, 0);
     gradient.addColorStop(0, '#5865F2');
-    gradient.addColorStop(1, '#00b0f4');
+    gradient.addColorStop(1, '#eb459e');
     ctx.strokeStyle = gradient;
     ctx.lineWidth = 10;
     ctx.strokeRect(5, 5, canvas.width - 10, canvas.height - 10);
 
-    // كتابة نصوص الترحيب الفنية
+    // 2. كتابة نصوص الترحيب
     ctx.fillStyle = '#ffffff';
     ctx.font = 'bold 36px Arial';
-    ctx.fillText('WELCOME!', 250, 100);
+    ctx.fillText('WELCOME!', 250, 110);
 
-    ctx.fillStyle = '#00b0f4';
+    ctx.fillStyle = '#b5bac1';
     ctx.font = '24px Arial';
-    ctx.fillText(member.user.username, 250, 145);
+    ctx.fillText(member.user.username, 250, 150);
 
-    ctx.fillStyle = '#99aab5';
+    ctx.fillStyle = '#5865F2';
     ctx.font = '18px Arial';
-    ctx.fillText(`Member #${member.guild.memberCount}`, 250, 185);
+    ctx.fillText(`Member #${member.guild.memberCount}`, 250, 190);
 
-    // رسم صورة العضو الشخصية كدائرة كاملة
+    // 3. رسم الصورة الشخصية الدائرية (Avatar)
     try {
-        const avatarUrl = member.user.displayAvatarURL({ extension: 'png', size: 256 });
+        const avatarUrl = member.user.displayAvatarURL({ extension: 'png', size: 128 });
         const avatarImage = await loadImage(avatarUrl);
 
         ctx.save();
@@ -153,9 +191,8 @@ async function generateWelcomeImage(member) {
     return canvas.toBuffer('image/png');
 }
 
-// قراءة دخول الأعضاء (الترحيب المطور بالصورة + اللوج + الرتب التلقائية)
+// قراءة دخول الأعضاء (الترحيب + اللوج + الرتب التلقائية)
 client.on('guildMemberAdd', async member => {
-    // أ- الرتب التلقائية الفورية للأعضاء الحقيقيين والبوتات
     if (member.user.bot) {
         if (autoRoleBotId) {
             const role = member.guild.roles.cache.get(autoRoleBotId);
@@ -168,7 +205,6 @@ client.on('guildMemberAdd', async member => {
         }
     }
 
-    // ب- الترحيب بالبطاقة المرسومة والاسم والمنشن في روم الترحيب المخصص
     if (welcomeChannelId) {
         const welcomeChannel = member.guild.channels.cache.get(welcomeChannelId);
         if (welcomeChannel) {
@@ -176,15 +212,14 @@ client.on('guildMemberAdd', async member => {
                 const imageBuffer = await generateWelcomeImage(member);
                 await welcomeChannel.send({
                     content: `👋 مرحباً بك يا ${member} في سيرفرنا الرائع! يسعدنا جداً انضمامك إلينا.`,
-                    files: [{ attachment: imageBuffer, name: 'welcome-card.png' }]
+                    files: [{ attachment: imageBuffer, name: 'welcome.png' }]
                 });
             } catch (err) {
-                console.error(err);
+                console.error('Welcome Image Error:', err);
             }
         }
     }
 
-    // ج- لوق دخول الأعضاء المتقدم والتفصيلي (-lgwelcome)
     if (logWelcomeChannelId) {
         const logChannel = member.guild.channels.cache.get(logWelcomeChannelId);
         if (logChannel) {
@@ -193,10 +228,10 @@ client.on('guildMemberAdd', async member => {
                 .setColor('#2ecc71')
                 .setThumbnail(member.user.displayAvatarURL())
                 .addFields(
-                    { name: '👤 الاسم', value: `${member.user.tag}`, inline: true },
+                    { name: '👤 الاسم والتاغ', value: `${member.user.tag}`, inline: true },
                     { name: '🆔 الأيدي (ID)', value: `\`${member.user.id}\``, inline: true },
-                    { name: '⏱️ تاريخ إنشاء حسابه بدقة', value: `<t:${Math.floor(member.user.createdTimestamp / 1000)}:R>`, inline: true },
-                    { name: '📅 وقت انضمامه للسيرفر', value: `<t:${Math.floor(Date.now() / 1000)}:f>`, inline: true }
+                    { name: '⏱️ تاريخ إنشاء الحساب', value: `<t:${Math.floor(member.user.createdTimestamp / 1000)}:R>`, inline: true },
+                    { name: '📅 وقت الدخول', value: `<t:${Math.floor(Date.now() / 1000)}:f>`, inline: true }
                 )
                 .setTimestamp();
             await logChannel.send({ embeds: [embed] }).catch(console.error);
@@ -242,37 +277,7 @@ async function handleConfigSetup(message, prefix, name) {
     return targetChannel.id;
 }
 
-// دالة المساعدة المحدثة بالكامل
-function getHelpEmbed() {
-    return new EmbedBuilder()
-        .setTitle('🏎️ دليل أوامر واختصارات البوت الكامل والمستقر')
-        .setDescription('مرحباً بك! إليك الشرح لجميع الميزات والاختصارات الحصرية المتاحة لك الآن:')
-        .setColor('#e67e22')
-        .addFields(
-            { name: '📂 أولاً: رومات الصور وحماية القنوات واللوج', value:
-                `**-rm [الاسم]** : لإنشاء روم نصي جديد ينسخ فقط صلاحيات الـ \`@everyone\` من الروم الحالي فوراً دون رتب.\n` +
-                `**-puc** : يكتب داخل الروم لجعلها **روم صور فقط** ومسح النصوص وتنبيه الأعضاء يدوياً بالخاص.\n` +
-                `**-lgm [#القناة]** : لتحديد قناة سجلات وتخريب شات الصور (في حال كرر عضو الكتابة النصية أكثر من 5 مرات).`
-            },
-            { name: '📊 ثانياً: لوقات السيرفر المتقدمة والرتب التلقائية الفورية', value:
-                `**-wel [#القناة]** : لتحديد روم الترحيب التلقائي ببطاقة الاسم والصورة الشخصية المبتكرة.\n` +
-                `**-lgwelcome [#القناة]** : لتحديد روم لوقات دخول الأعضاء الجدد وتوثيق حساباتهم.\n` +
-                `**-lgbye [#القناة]** : لتحديد روم لوقات خروج ومغادرة الأعضاء.\n` +
-                `**-gm [أيدي الرتبة]** : لتحديد رتبة تلقائية يتم منحها فوراً لأي عضو حقيقي يدخل السيرفر.\n` +
-                `**-gb [أيدي الرتبة]** : لتحديد رتبة تلقائية يتم منحها فوراً لأي بوت يدخل السيرفر.`
-            },
-            { name: '⚽ ثالثاً: تحديات وأسئلة روكيت ليق والإرسال التلقائي', value:
-                `**-sn** : لتشغيل الإرسال التلقائي للأسئلة العشوائية والممتعة في الشات كل 10 دقائق.\n` +
-                `**-snp** : لإيقاف نظام الإرسال التلقائي للأسئلة العشوائية فوراً.\n` +
-                `**-s** : لإرسال سؤال عشوائي وتحدي واحد فوراً في الشات لتجربة التفاعل.\n` +
-                `**-t** : لبدء برودكاست جماعي فائق السرعة والآمن لجميع الأعضاء بالخاص مع الـ Rate limit لتفادي الباند.\n` +
-                `**-hp** : لعرض دليل المساعدة والشرح الموحد الماثل أمامك الآن.`
-            }
-        )
-        .setTimestamp();
-}
-
-// الاستماع للرسائل وتطبيق كامل العمليات المطلوبة بدقة تامة
+// الاستماع للرسائل والأوامر البرمجية والتحكم بها
 client.on('messageCreate', async message => {
     if (message.author.bot) return;
 
@@ -291,7 +296,7 @@ client.on('messageCreate', async message => {
 
         const roomName = content.slice(CREATE_ROOM_PREFIX.length).trim();
         if (!roomName) {
-            return message.reply('❌ يرجى كتابة اسم الروم النصي المراد إنشاؤه (مثال: `-rm chat-players`):');
+            return message.reply('❌ يرجى كتابة اسم الروم النصي المراد إنشاؤه (مثال: `-rm chat-rocket`):');
         }
 
         try {
@@ -300,7 +305,7 @@ client.on('messageCreate', async message => {
 
             const permissionOverwrites = [
                 {
-                    id: message.guild.id, 
+                    id: message.guild.id, // @everyone
                     allow: everyonePermissions ? everyonePermissions.allow.toArray() : [],
                     deny: everyonePermissions ? everyonePermissions.deny.toArray() : []
                 }
@@ -327,7 +332,7 @@ client.on('messageCreate', async message => {
 
         const roleMention = message.mentions.roles.first();
         if (!roleMention) {
-            return message.reply('❌ يرجى منشن الرتبة المراد إضافتها للقناة:');
+            return message.reply('❌ يرجى منشن الرتبة المراد إضافتها للقناة (مثال: `-addrole @Support`):');
         }
 
         try {
@@ -343,7 +348,7 @@ client.on('messageCreate', async message => {
         return;
     }
 
-    // 3. تعيين قنوات السيرفر المختلفة بالاختصارات
+    // 3. تعيين قنوات السيرفر المختلفة بالمنشن والاختصارات
     if (content.startsWith(WELCOME_SETUP_PREFIX)) {
         if (!message.member.permissions.has(PermissionFlagsBits.Administrator)) return;
         welcomeChannelId = await handleConfigSetup(message, WELCOME_SETUP_PREFIX, 'الترحيب بالأعضاء الجدد (-wel)');
@@ -373,7 +378,7 @@ client.on('messageCreate', async message => {
         if (!message.member.permissions.has(PermissionFlagsBits.Administrator)) return;
         const roleId = content.replace('-gm', '').trim();
         const role = message.guild.roles.cache.get(roleId);
-        if (!role) return message.reply('❌ الأيدي غير صحيح أو الرتبة غير موجودة:');
+        if (!role) return message.reply('❌ الأيدي غير صحيح أو الرتبة غير موجودة. يرجى كتابة أيدي رتبة صحيح لأعضاء البشر:');
         autoRoleMemberId = roleId;
         await message.reply(`✅ **تم تعيين الرتبة التلقائية للأعضاء الجدد بنجاح لتكون: ${role.name}**`);
         return;
@@ -383,7 +388,7 @@ client.on('messageCreate', async message => {
         if (!message.member.permissions.has(PermissionFlagsBits.Administrator)) return;
         const roleId = content.replace('-gb', '').trim();
         const role = message.guild.roles.cache.get(roleId);
-        if (!role) return message.reply('❌ الأيدي غير صحيح أو الرتبة غير موجودة:');
+        if (!role) return message.reply('❌ الأيدي غير صحيح أو الرتبة غير موجودة. يرجى كتابة أيدي رتبة صحيح للبوتات:');
         autoRoleBotId = roleId;
         await message.reply(`✅ **تم تعيين الرتبة التلقائية للبوتات بنجاح لتكون: ${role.name}**`);
         return;
