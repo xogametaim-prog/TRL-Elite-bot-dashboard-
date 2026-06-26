@@ -12,8 +12,7 @@ const {
     REST,
     Routes,
     MessageFlags,
-    Events,
-    ActivityType
+    Events
 } = require('discord.js');
 const express = require('express');
 
@@ -28,7 +27,7 @@ const client = new Client({
         GatewayIntentBits.GuildMessages,
         GatewayIntentBits.MessageContent,
         GatewayIntentBits.GuildMembers,
-        GatewayIntentBits.GuildPresences // ضروري لفرز الأعضاء الأونلاين والاوفلاين للبرودكاست
+        GatewayIntentBits.GuildPresences 
     ]
 });
 
@@ -37,9 +36,8 @@ const EMBED_PREFIX = '-em';
 const BROADCAST_PREFIX = '-t';
 const HELP_PREFIX = '-hp'; 
 
-// اللوجات المخصصة
-const LOG_TICKET_PREFIX = '-lgt';      // لوج التذاكر
-const LOG_FEEDBACK_PREFIX = '-lgfd';   // لوج التقييمات بالنجوم
+const LOG_TICKET_PREFIX = '-lgt';      
+const LOG_FEEDBACK_PREFIX = '-lgfd';   
 
 const tempSetup = new Map();
 const embedSetup = new Map();
@@ -50,6 +48,11 @@ let logFeedbackChannelId = null;
 
 const TOKEN = process.env.TOKEN;
 const CLIENT_ID = process.env.CLIENT_ID;
+
+// منع انهيار البوت عند حدوث أي خطأ غير متوقع بالاتصال مع ديسكورد
+process.on('unhandledRejection', error => {
+    console.error('Unhandled promise rejection:', error);
+});
 
 client.once('ready', async () => {
     console.log(`Logged in as ${client.user.tag}`);
@@ -64,7 +67,6 @@ client.once('ready', async () => {
         console.error(error);
     }
 
-    // إرسال رسالة التحديث التلقائي في جميع السيرفرات المتصل بها البوت فور تشغيله
     client.guilds.cache.forEach(async guild => {
         const defaultChannel = guild.channels.cache
             .filter(c => c.type === ChannelType.GuildText && c.permissionsFor(guild.members.me).has(PermissionFlagsBits.SendMessages))
@@ -75,7 +77,6 @@ client.once('ready', async () => {
     });
 });
 
-// دالة لوج التذاكر المطور (-lgt) المكتوب بداخل إمبد ملوّن وتفصيلي
 async function sendTicketLog(guild, channelName, creatorId, claimerId, closerUser, claimTime = null) {
     if (!logTicketChannelId) return;
     const logChannel = guild.channels.cache.get(logTicketChannelId);
@@ -105,7 +106,6 @@ async function sendTicketLog(guild, channelName, creatorId, claimerId, closerUse
     }
 }
 
-// دالة لوج التقييمات بالنجوم (-lgfd)
 async function sendRatingLog(guild, creator, rating, claimerName) {
     if (!logFeedbackChannelId) return;
     const logChannel = guild.channels.cache.get(logFeedbackChannelId);
@@ -130,7 +130,6 @@ async function sendRatingLog(guild, creator, rating, claimerName) {
     }
 }
 
-// دالة إعداد السجلات الفورية بمجرد كتابة الاختصار بالأيدي أو المنشن
 async function handleConfigSetup(message, prefix, name) {
     const args = message.content.slice(prefix.length).trim().split(/ +/);
     const channelMention = message.mentions.channels.first();
@@ -148,7 +147,6 @@ async function handleConfigSetup(message, prefix, name) {
     return targetChannel.id;
 }
 
-// دالة المساعدة والشروح الشاملة المحدثة
 function getHelpEmbed() {
     return new EmbedBuilder()
         .setTitle('⚙️ دليل اختصارات وأوامر البوت المطور بالكامل')
@@ -172,20 +170,17 @@ function getHelpEmbed() {
         .setTimestamp();
 }
 
-// الاستماع للرسائل وتطبيق كامل العمليات المطلوبة بدقة تامة
 client.on('messageCreate', async message => {
     if (message.author.bot) return;
 
     const content = message.content.trim();
 
-    // 1. أمر المساعدة وعرض الشروح المحدث -hp
     if (content === HELP_PREFIX) {
         await message.channel.send({ embeds: [getHelpEmbed()] });
         await message.delete().catch(() => {});
         return;
     }
 
-    // 2. تفعيل قنوات السجلات فوراً بالأيدي أو المنشن
     if (content.startsWith(LOG_TICKET_PREFIX)) {
         if (!message.member.permissions.has(PermissionFlagsBits.Administrator)) return;
         logTicketChannelId = await handleConfigSetup(message, LOG_TICKET_PREFIX, 'سجلات حركة التذاكر (-lgt)');
@@ -198,7 +193,6 @@ client.on('messageCreate', async message => {
         return;
     }
 
-    // 3. الاختصار التفاعلي للبوكس المخصص المعدد (من 1 إلى 5 أقسام وبأقسام ورتب مستقلة)
     if (content === TICKET_PREFIX) {
         const member = message.member;
         if (!member.permissions.has(PermissionFlagsBits.Administrator)) {
@@ -221,7 +215,6 @@ client.on('messageCreate', async message => {
         return;
     }
 
-    // الاختصار -em لتجهيز إمبد مخصص مع التنظيف الفوري للشات
     if (content === EMBED_PREFIX) {
         const member = message.member;
         if (!member.permissions.has(PermissionFlagsBits.Administrator)) {
@@ -236,7 +229,6 @@ client.on('messageCreate', async message => {
         return;
     }
 
-    // 4. برودكاست الخاص الذكي وفائق السرعة (يمنشن المستلم، ويرسل للأونلاين أولاً ثم الاوفلاين)
     if (content === BROADCAST_PREFIX) {
         const member = message.member;
         if (!member.permissions.has(PermissionFlagsBits.Administrator)) {
@@ -251,7 +243,6 @@ client.on('messageCreate', async message => {
         return;
     }
 
-    // تتبع خطوات إعداد بوكس التكت المتعدد -st ومسح الشات عند الانتهاء
     if (tempSetup.has(message.author.id)) {
         const state = tempSetup.get(message.author.id);
         state.messagesToDelete.push(message.id);
@@ -354,7 +345,6 @@ client.on('messageCreate', async message => {
 
             await message.channel.send({ embeds: [embed], components: [row] });
             
-            // تنظيف الشات تماماً ومسح جميع رسائل الإعداد والأسئلة تلقائياً
             setTimeout(async () => {
                 for (const msgId of state.messagesToDelete) {
                     await message.channel.messages.delete(msgId).catch(() => {});
@@ -365,7 +355,6 @@ client.on('messageCreate', async message => {
         }
     }
 
-    // تتبع خطوات إعداد إمبد -em والمسح الفوري والتلقائي للشات عند الانتهاء
     if (embedSetup.has(message.author.id)) {
         const state = embedSetup.get(message.author.id);
         state.messagesToDelete.push(message.id);
@@ -414,7 +403,6 @@ client.on('messageCreate', async message => {
         }
     }
 
-    // تتبع خطوات إعداد برودكاست الخاص فائق السرعة والآمن (Online ثم Offline) مع المنشن
     if (dmSetup.has(message.author.id)) {
         const state = dmSetup.get(message.author.id);
         state.messagesToDelete.push(message.id);
@@ -453,7 +441,6 @@ client.on('messageCreate', async message => {
 
             const members = await message.guild.members.fetch();
             
-            // فرز وتقسيم الأعضاء: المتصلين (Online) أولاً، وغير المتصلين (Offline) ثانياً
             const onlineMembers = [];
             const offlineMembers = [];
 
@@ -467,14 +454,12 @@ client.on('messageCreate', async message => {
                 }
             });
 
-            // دمج المجموعتين بالترتيب المطلوب (الأونلاين أولاً ثم الأوفلاين)
             const sortedMembers = [...onlineMembers, ...offlineMembers];
 
             let sentCount = 0;
             let failedCount = 0;
             let index = 0;
 
-            // إرسال فائق السرعة وآمن (تأخير 2 ثانية فقط وهي أسرع سرعة برمجية آمنة تمنع الباند)
             const interval = setInterval(async () => {
                 if (index >= sortedMembers.length) {
                     clearInterval(interval);
@@ -484,7 +469,6 @@ client.on('messageCreate', async message => {
 
                 const targetMember = sortedMembers[index];
                 
-                // تجهيز رسالة الإمبد مع منشن تلقائي للعضو المراسَل بداخل الوصف لزيادة التفاعل
                 const personalizedEmbed = new EmbedBuilder()
                     .setTitle(state.title)
                     .setDescription(`أهلاً بك يا ${targetMember} 👋\n\n${state.description}`)
@@ -504,14 +488,13 @@ client.on('messageCreate', async message => {
 
                 await statusMsg.edit(`⏳ **جاري الإرسال التدريجي للأعضاء (المتصلين 🟢 ثم الأوفلاين 🔴)...**\n\n📊 التقدم: \`${index + 1}/${sortedMembers.length}\` عضو.\n✅ تم الإرسال: \`${sentCount}\` | ❌ فشل: \`${failedCount}\``);
                 index++;
-            }, 2000); // 2 ثانية فقط لأقصى سرعة آمنة من الباند
+            }, 2000); 
 
             dmSetup.delete(message.author.id);
             return;
         }
     }
 
-    // أمر استدعاء العضو داخل التكت المفتوح !ping
     if (message.content.trim().toLowerCase() === '!ping') {
         const topic = message.channel.topic || '';
         if (topic.includes('creator_id:')) {
@@ -527,18 +510,19 @@ client.on('messageCreate', async message => {
     }
 });
 
-// التعامل مع التفاعلات وحركة التذاكر والأزرار الخمسة للتذكرة المفتوحة
 client.on('interactionCreate', async interaction => {
+    // حل مشكلة تأخر الاستجابة (Interaction Timeout) عبر إرسال الرد المبدئي في ديسكورد فوراً وبأقل من ثانية واحدة لضمان استقرار البوت
     if (interaction.isChatInputCommand()) {
         if (interaction.commandName === 'setup') {
+            await interaction.reply({ content: 'بدء الإعداد المخصص بالخاص أو الشات...', flags: MessageFlags.Ephemeral }).catch(() => {});
             await startInteractiveSetup(interaction.channel, interaction.user);
-            await interaction.reply({ content: 'بدء الإعداد المخصص...', flags: MessageFlags.Ephemeral });
         }
     }
 
     if (interaction.isStringSelectMenu()) {
         if (interaction.customId.startsWith('multi_t_menu_')) {
-            await interaction.deferReply({ flags: MessageFlags.Ephemeral });
+            // الاستجابة الفورية للغاية خلال أقل من جزء من الثانية لإنهاء مهلة الـ 3 ثوانٍ الخاصة بـ ديسكورد
+            await interaction.deferReply({ flags: MessageFlags.Ephemeral }).catch(() => {});
 
             const parts = interaction.customId.split('_');
             const targetCategoryId = parts[4] === 'none' ? null : parts[4];
@@ -551,7 +535,7 @@ client.on('interactionCreate', async interaction => {
 
             const existingChannel = guild.channels.cache.find(c => c.name.startsWith('ticket-') && c.name.endsWith(member.user.username));
             if (existingChannel) {
-                return interaction.editReply({ content: `❌ لا يمكنك فتح تذكرة جديدة؛ لأن لديك تذكرة مفتوحة بالفعل وهي: ${existingChannel}` });
+                return interaction.editReply({ content: `❌ لا يمكنك فتح تذكرة جديدة؛ لأن لديك تذكرة مفتوحة بالفعل وهي: ${existingChannel}` }).catch(() => {});
             }
 
             const permissionOverwrites = [
@@ -574,7 +558,6 @@ client.on('interactionCreate', async interaction => {
                     permissionOverwrites: permissionOverwrites
                 });
 
-                // تسجيل وحفظ وقت الفتح التلقائي وأيدي المنشئ في توبك القناة
                 await channel.setTopic(`creator_id:${member.id};open_time:${Date.now()}`);
 
                 const welcomeEmbed = new EmbedBuilder()
@@ -583,7 +566,6 @@ client.on('interactionCreate', async interaction => {
                     .setColor('#5865F2')
                     .setTimestamp();
 
-                // الأزرار الخمسة التفاعلية الفورية داخل التذكرة المفتوحة
                 const claimButton = new ButtonBuilder().setCustomId(`btn_claim_${targetRoleId}`).setLabel('استلام التذكرة 🙋‍♂️').setStyle(ButtonStyle.Primary);
                 const closeButton = new ButtonBuilder().setCustomId(`btn_close_${targetRoleId}`).setLabel('إغلاق التذكرة 🔒').setStyle(ButtonStyle.Danger);
                 const pingUserBtn = new ButtonBuilder().setCustomId('btn_ping_user').setLabel('تنبيه العضو 🔔').setStyle(ButtonStyle.Secondary);
@@ -600,11 +582,11 @@ client.on('interactionCreate', async interaction => {
                     components: [row1, row2] 
                 });
 
-                await interaction.editReply({ content: `تم فتح تذكرتك بنجاح في القناة: ${channel}` });
+                await interaction.editReply({ content: `تم فتح تذكرتك بنجاح في القناة: ${channel}` }).catch(() => {});
 
             } catch (error) {
                 console.error(error);
-                await interaction.editReply({ content: '❌ حدث خطأ غير متوقع أثناء محاولة إنشاء التذكرة.' });
+                await interaction.editReply({ content: '❌ حدث خطأ غير متوقع أثناء محاولة إنشاء التذكرة.' }).catch(() => {});
             }
         }
     }
@@ -613,29 +595,27 @@ client.on('interactionCreate', async interaction => {
         const customId = interaction.customId;
         const member = interaction.member;
 
-        // 1. زر استلام التذكرة
         if (customId.startsWith('btn_claim_')) {
             const targetRoleId = customId.replace('btn_claim_', '');
 
             const hasRequiredRole = member.roles.cache.has(targetRoleId) || member.permissions.has(PermissionFlagsBits.Administrator);
             if (!hasRequiredRole) {
-                return interaction.reply({ content: '❌ لا يمكنك استلام هذه التذكرة لأنك لا تملك الرتبة المخصصة للتحكم فيها!', flags: MessageFlags.Ephemeral });
+                return interaction.reply({ content: '❌ لا يمكنك استلام هذه التذكرة لأنك لا تملك الرتبة المخصصة للتحكم فيها!', flags: MessageFlags.Ephemeral }).catch(() => {});
             }
 
-            await interaction.deferUpdate();
+            // الاستجابة الفورية والسريعة لديسكورد
+            await interaction.deferUpdate().catch(() => {});
 
             const topic = interaction.channel.topic || '';
             const creatorId = topic.split('creator_id:')[1]?.split(';')[0] || '';
             const openTime = topic.split('open_time:')[1]?.split(';')[0] || Date.now();
             
-            // تسجيل وقت الاستلام وأيدي المستلم في التوبك فوراً
             await interaction.channel.setTopic(`creator_id:${creatorId};open_time:${openTime};claimed_by:${member.id};claimer_name:${member.user.username};claim_time:${Date.now()}`);
 
             const oldEmbed = interaction.message.embeds[0];
             const updatedEmbed = EmbedBuilder.from(oldEmbed)
                 .addFields({ name: 'المشرف المستلم', value: `👤 تم الاستلام بواسطة: ${member}` });
 
-            // تعطيل زر الاستلام والحفاظ على الباقي
             const disabledClaimButton = new ButtonBuilder().setCustomId('claimed_disabled_btn').setLabel(`مستلمة بواسطة ${member.user.username}`).setStyle(ButtonStyle.Success).setDisabled(true);
             const closeButton = new ButtonBuilder().setCustomId(`btn_close_${targetRoleId}`).setLabel('إغلاق التذكرة 🔒').setStyle(ButtonStyle.Danger);
             const pingUserBtn = new ButtonBuilder().setCustomId('btn_ping_user').setLabel('تنبيه العضو 🔔').setStyle(ButtonStyle.Secondary);
@@ -645,33 +625,30 @@ client.on('interactionCreate', async interaction => {
             const row1 = new ActionRowBuilder().addComponents(disabledClaimButton, closeButton);
             const row2 = new ActionRowBuilder().addComponents(pingUserBtn, pingAdminBtn, requestCloseBtn);
 
-            await interaction.editReply({ embeds: [updatedEmbed], components: [row1, row2] });
+            await interaction.editReply({ embeds: [updatedEmbed], components: [row1, row2] }).catch(() => {});
             
             const creatorMention = creatorId ? `<@${creatorId}>` : '';
-            await interaction.followUp({ content: `${creatorMention} **تم استلام تكت عن طريق هذا الإدارة: ${member}، تابع معه.**` });
+            await interaction.followUp({ content: `${creatorMention} **تم استلام تكت عن طريق هذا الإدارة: ${member}، تابع معه.**` }).catch(() => {});
         }
 
-        // 2. زر تنبيه العضو
         if (customId === 'btn_ping_user') {
             const topic = interaction.channel.topic || '';
             const creatorId = topic.split('creator_id:')[1]?.split(';')[0] || '';
             const targetMember = interaction.guild.members.cache.get(creatorId);
             
             if (targetMember) {
-                await interaction.reply({ content: `🔔 تنبيه وتذكير للعضو ${targetMember} لمراجعة شات التذكرة والرد على المشرفين.` });
+                await interaction.reply({ content: `🔔 تنبيه وتذكير للعضو ${targetMember} لمراجعة شات التذكرة والرد على المشرفين.` }).catch(() => {});
             } else {
-                await interaction.reply({ content: '❌ لم يتم العثور على صاحب التذكرة في السيرفر حالياً.', flags: MessageFlags.Ephemeral });
+                await interaction.reply({ content: '❌ لم يتم العثور على صاحب التذكرة في السيرفر حالياً.', flags: MessageFlags.Ephemeral }).catch(() => {});
             }
         }
 
-        // 3. زر تنبيه الإدارة المستلمة للتذكرة
         if (customId.startsWith('btn_ping_admin_')) {
             const targetRoleId = customId.replace('btn_ping_admin_', '');
             const roleMention = targetRoleId ? `<@&${targetRoleId}>` : '@everyone';
-            await interaction.reply({ content: `🚨 تنبيه للرتبة المسؤولة عن القسم ${roleMention}، هناك تذكرة مفتوحة تحتاج مراجعة فورية.` });
+            await interaction.reply({ content: `🚨 تنبيه للرتبة المسؤولة عن القسم ${roleMention}، هناك تذكرة مفتوحة تحتاج مراجعة فورية.` }).catch(() => {});
         }
 
-        // 4. زر طلب إغلاق التذكرة لإنهاء المشكلة
         if (customId === 'btn_request_close') {
             const topic = interaction.channel.topic || '';
             const creatorId = topic.split('creator_id:')[1]?.split(';')[0] || '';
@@ -682,10 +659,9 @@ client.on('interactionCreate', async interaction => {
                 .setDescription(`مرحباً ${targetMember}، يرى الإشراف المتابع معك أن المشكلة قد تم حلها بنجاح.\n\nيرجى مراجعة التذكرة وتأكيد الإغلاق أو كتابة استفسارك إذا كنت لا تزال بحاجة لمساعدة.`)
                 .setColor('#e67e22');
 
-            await interaction.reply({ embeds: [requestEmbed] });
+            await interaction.reply({ embeds: [requestEmbed] }).catch(() => {});
         }
 
-        // 5. زر إغلاق التذكرة (إرسال اللوج بالتفاصيل والتقييم بالنجوم للوج المخصص -lgfd)
         if (customId.startsWith('btn_close_')) {
             const targetRoleId = customId.replace('btn_close_', '');
             const topic = interaction.channel.topic || '';
@@ -700,15 +676,13 @@ client.on('interactionCreate', async interaction => {
             const isAdmin = member.permissions.has(PermissionFlagsBits.Administrator);
 
             if (!isClaimer && !hasSupportRole && !isAdmin) {
-                return interaction.reply({ content: '❌ لا يمكنك إغلاق التذكرة، الإغلاق متاح فقط لمن استلمها أو الرتبة المخصصة للقسم.', flags: MessageFlags.Ephemeral });
+                return interaction.reply({ content: '❌ لا يمكنك إغلاق التذكرة، الإغلاق متاح فقط لمن استلمها أو الرتبة المخصصة للقسم.', flags: MessageFlags.Ephemeral }).catch(() => {});
             }
 
-            await interaction.reply({ content: '⚠️ جاري إرسال اللوج وطلب التقييم وحذف التذكرة خلال 5 ثوانٍ...' });
+            await interaction.reply({ content: '⚠️ جاري إرسال اللوج وطلب التقييم وحذف التذكرة خلال 5 ثوانٍ...' }).catch(() => {});
 
-            // إرسال اللوج التفصيلي في روم التكتات المخصص (-lgt) بداخل إمبد ملوّن ومفصل بالساعة والمنشئ والمستلم
             await sendTicketLog(interaction.guild, interaction.channel.name, creatorId, claimerId, member, claimTime);
 
-            // إرسال أزرار التقييم للعضو في الخاص وحل مشكلة وصول التقييم للوج المخصص (-lgfd)
             const creatorUser = await interaction.guild.members.fetch(creatorId).catch(() => null);
             if (creatorUser) {
                 const ratingEmbed = new EmbedBuilder()
@@ -736,20 +710,18 @@ client.on('interactionCreate', async interaction => {
             }, 5000);
         }
 
-        // تسجيل التقييم في قناة اللوج المخصصة للتقييمات (-lgfd) فور ضغط العضو عليه بالخاص
         if (customId.startsWith('rate_')) {
-            await interaction.deferUpdate();
+            await interaction.deferUpdate().catch(() => {});
             const parts = customId.split('_');
             const rating = parseInt(parts[1]);
             const claimerName = parts[2];
 
             await sendRatingLog(interaction.guild, interaction.user, rating, claimerName);
-            await interaction.followUp({ content: '✅ **شكراً جزيلاً لك على تقييمك المطور! تم إرسال التقييم لقسم السجلات بنجاح.**', flags: MessageFlags.Ephemeral });
+            await interaction.followUp({ content: '✅ **شكراً جزيلاً لك على تقييمك المطور! تم إرسال التقييم لقسم السجلات بنجاح.**', flags: MessageFlags.Ephemeral }).catch(() => {});
         }
 
-        // زر الإمبد العام المخصص
         if (customId === 'general_embed_button_action') {
-            await interaction.reply({ content: 'سيتم فتح تذكرة عامة لك الآن...', flags: MessageFlags.Ephemeral });
+            await interaction.reply({ content: 'سيتم فتح تذكرة عامة لك الآن...', flags: MessageFlags.Ephemeral }).catch(() => {});
             const guild = interaction.guild;
             const member = interaction.member;
 
@@ -784,7 +756,7 @@ client.on('interactionCreate', async interaction => {
         }
 
         if (customId === 'close_custom_ticket_general') {
-            await interaction.reply({ content: '⚠️ سيتم حذف التذكرة نهائياً وإغلاق القناة خلال 5 ثوانٍ...' });
+            await interaction.reply({ content: '⚠️ سيتم حذف التذكرة نهائياً وإغلاق القناة خلال 5 ثوانٍ...' }).catch(() => {});
             setTimeout(async () => {
                 try {
                     await interaction.channel.delete();
