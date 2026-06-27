@@ -6,23 +6,23 @@ const {
     ButtonBuilder, 
     ButtonStyle, 
     REST,
-    Routes
+    Routes,
+    PermissionFlagsBits
 } = require('discord.js');
 const express = require('express');
-const axios = require('axios'); // حزمة ضرورية ومهمة لإتمام عمليات طلب الـ OAuth2 من ديسكورد وسحب الأعضاء
+const axios = require('axios'); // حزمة لإتمام طلبات الـ OAuth2 من ديسكورد وسحب الأعضاء
 
 const app = express();
 const PORT = process.env.PORT || 3000;
 
-// قاعدة بيانات مؤقتة لتخزين الـ Access Tokens الخاصة بالأعضاء الذين وافقوا على التحقق
-// (في المشاريع الكبيرة يفضل استخدام داتابيس مثل MongoDB أو SQLite لحفظها دائماً عند إعادة تشغيل البوت)
-const verifiedUsers = new Map(); // يحمل أيدي العضو والـ Access Token الخاص به لعمل السحب لاحقاً
+// قاعدة بيانات مؤقتة لتخزين الـ Access Tokens الخاصة بالأعضاء الموثقين
+const verifiedUsers = new Map(); 
 
 app.use(express.json());
 
 app.get('/', (req, res) => res.send('OAuth2 Verify Bot is Running!'));
 
-// الرابط البرمجي (Callback) الذي سيتم توجيه العضو إليه فور ضغطه على Authorize
+// الرابط البرمجي (Callback) لمعالجة التحقق
 app.get('/callback', async (req, res) => {
     const code = req.query.code;
     if (!code) {
@@ -30,20 +30,20 @@ app.get('/callback', async (req, res) => {
     }
 
     try {
-        // 1. تبديل الـ Code المستلم بـ Access Token من خوادم ديسكورد
+        // 1. تبديل الـ Code بـ Access Token من ديسكورد
         const tokenResponse = await axios.post('https://discord.com/api/v10/oauth2/token', new URLSearchParams({
             client_id: process.env.CLIENT_ID,
-            client_secret: process.env.CLIENT_SECRET, // يجب إضافة السكرت في البيئة (Env) بريندر
+            client_secret: process.env.CLIENT_SECRET, 
             grant_type: 'authorization_code',
             code: code,
-            redirect_uri: `https://${req.hostname}/callback` // رابط الـ Redirect URI المربوط بالديفلوبر بورتال
+            redirect_uri: `https://${req.hostname}/callback` 
         }), {
             headers: { 'Content-Type': 'application/x-www-form-urlencoded' }
         });
 
         const accessToken = tokenResponse.data.access_token;
 
-        // 2. جلب معلومات حساب العضو الموثق لمعرفة أيدي حسابه
+        // 2. جلب معلومات حساب العضو لمعرفة أيدي حسابه
         const userResponse = await axios.get('https://discord.com/api/v10/users/@me', {
             headers: { Authorization: `Bearer ${accessToken}` }
         });
@@ -51,7 +51,7 @@ app.get('/callback', async (req, res) => {
         const userId = userResponse.data.id;
         const username = userResponse.data.username;
 
-        // 3. تخزين العضو والـ Access Token الخاص به في قاعدة البيانات للسحب لاحقاً
+        // 3. تخزين العضو والـ Access Token للسحب لاحقاً
         verifiedUsers.set(userId, accessToken);
 
         res.send(`<h1>✅ Verified Successfully! Thank you ${username}. You can now close this tab.</h1>`);
@@ -77,7 +77,7 @@ const SET_VERIFY_URL_PREFIX = '-vt';  // تعيين وتحديث رابط الـ
 const COUNT_VERIFY_PREFIX = '-vf';    // فحص إجمالي عدد الأعضاء الموثقين
 const PULL_MEMBERS_PREFIX = '-pull';  // أمر سحب الأعضاء الفوري للسيرفر المحدد
 
-let verifyUrl = 'https://discord.com/api/oauth2/authorize...'; // رابط التحقق الخاص بك
+let verifyUrl = 'https://discord.com/api/oauth2/authorize...'; 
 
 const TOKEN = process.env.TOKEN;
 const CLIENT_ID = process.env.CLIENT_ID;
@@ -93,7 +93,9 @@ client.on('messageCreate', async message => {
 
     // 1. إرسال البوكس وزر Verify Yourself
     if (content === VERIFY_SETUP_PREFIX) {
-        if (!message.member.permissions.has(PermissionFlagsBits.Administrator)) return;
+        if (!message.member.permissions.has(PermissionFlagsBits.Administrator)) {
+            return message.reply('❌ عذراً، هذا الأمر مخصص للإداريين فقط.');
+        }
 
         const embed = new EmbedBuilder()
             .setTitle('🛡️ Server Verification / التحقق الذاتي')
@@ -138,7 +140,7 @@ client.on('messageCreate', async message => {
         if (!message.member.permissions.has(PermissionFlagsBits.Administrator)) return;
 
         const args = content.slice(PULL_MEMBERS_PREFIX.length).trim().split(/ +/);
-        const targetGuildId = args[0] || message.guild.id; // إذا لم تكتب الأيدي سيقوم بسحبهم للسيرفر الحالي
+        const targetGuildId = args[0] || message.guild.id; 
 
         if (verifiedUsers.size === 0) {
             return message.reply('❌ لا يوجد أي أعضاء موثقين ومسجلين بداخل قاعدة بيانات البوت حالياً لسحبهم.');
@@ -157,7 +159,6 @@ client.on('messageCreate', async message => {
 
         const userArray = Array.from(verifiedUsers.entries());
 
-        // سحب وإدخال الأعضاء تدريجياً لعدم تعليق الريندر (عضو كل ثانية)
         let index = 0;
         const interval = setInterval(async () => {
             if (index >= userArray.length) {
@@ -168,13 +169,11 @@ client.on('messageCreate', async message => {
 
             const [userId, accessToken] = userArray[index];
 
-            // التحقق مما إذا كان العضو متواجداً بالسيرفر المستهدف بالفعل لتفادي تكرار الطلب
             const isMember = targetGuild.members.cache.has(userId);
             if (isMember) {
                 alreadyInCount++;
             } else {
                 try {
-                    // إرسال طلب السحب الفوري (PUT Request) لدعوة وإدخال العضو تلقائياً عبر ديسكورد API
                     await axios.put(`https://discord.com/api/v10/guilds/${targetGuildId}/members/${userId}`, {
                         access_token: accessToken
                     }, {
@@ -191,7 +190,7 @@ client.on('messageCreate', async message => {
 
             await statusMsg.edit(`⏳ **جاري السحب الفوري للأعضاء...**\n\n📊 التقدم الحالي: \`${index + 1}/${userArray.length}\` عضو.\n✅ تم الإدخال: \`${successCount}\` | 🔄 موجود سابقاً: \`${alreadyInCount}\` | ❌ فشل: \`${failCount}\``);
             index++;
-        }, 1200); // تأخير ثانية لضمان الاستقرار الفائق والسرعة
+        }, 1200); 
 
         return;
     }
