@@ -79,32 +79,45 @@ let logTicketChannelId = null;
 let autoMemberRoleId = null;
 let autoBotRoleId = null;
 
-client.once('ready', async () => {
+// توحيد مسمى متغير التوكن مع نهاية الكود لضمان قراءته ومنع الـ ReferenceError
+const TOKEN = process.env.TOKEN || process.env.token || process.env.توكين || process.env.توكن;
+const CLIENT_ID = process.env.CLIENT_ID || process.env.client_id || process.env.سلينت;
+
+client.once('clientReady', async () => {
     console.log(`Bot logged in as ${client.user.tag}`);
     const commands = [
         { name: 'setup', description: 'بدء إعداد نظام التذاكر المتعدد التفاعلي' }
     ];
-    const rest = new REST({ version: '10' }).setToken(process.env.TOKEN);
+    const rest = new REST({ version: '10' }).setToken(TOKEN);
     try {
-        await rest.put(Routes.applicationCommands(process.env.CLIENT_ID), { body: commands });
+        await rest.put(Routes.applicationCommands(CLIENT_ID), { body: commands });
         console.log('Commands registered.');
     } catch (e) {
         console.error(e);
     }
 });
 
-// توليد بطاقة ترحيب ومغادرة الكانفا فائقة السرعة
+// توافقية إضافية لضمان التشغيل في كل الحالات
+client.once('ready', async () => {
+    if (client.isReady()) return;
+    console.log(`Bot logged in as ${client.user.tag}`);
+});
+
+// دالة توليد بطاقة مرسومة بالكانفا (للدخول أو الخروج)
 async function generateCard(member, title, colorHex) {
     const canvas = createCanvas(700, 250);
     const ctx = canvas.getContext('2d');
 
+    // الخلفية
     ctx.fillStyle = '#23272a';
     ctx.fillRect(0, 0, canvas.width, canvas.height);
 
+    // إطار ملوّن أنيق بحدود مائلة
     ctx.strokeStyle = colorHex;
     ctx.lineWidth = 8;
     ctx.strokeRect(5, 5, canvas.width - 10, canvas.height - 10);
 
+    // نصوص فنية
     ctx.fillStyle = '#ffffff';
     ctx.font = 'bold 36px Arial';
     ctx.fillText(title, 250, 100);
@@ -117,6 +130,7 @@ async function generateCard(member, title, colorHex) {
     ctx.font = '16px Arial';
     ctx.fillText(`ID: ${member.user.id}`, 250, 185);
 
+    // رسم صورة العضو الدائرية
     try {
         const avatarUrl = member.user.displayAvatarURL({ extension: 'png', size: 256 });
         const avatarImage = await loadImage(avatarUrl);
@@ -139,11 +153,11 @@ async function generateCard(member, title, colorHex) {
     return canvas.toBuffer('image/png');
 }
 
-// دليل الشرح والمساعدة الموحد الشامل -hp (مخفي منه أوامر التحقق تماماً)
+// دالة المساعدة المحدثة بالكامل دون مراجع للأسئلة
 function getHelpEmbed() {
     return new EmbedBuilder()
         .setTitle('⚙️ دليل أوامر واختصارات البوت الكامل والمستقر')
-        .setDescription('إليك الشرح لجميع الميزات والاختصارات الحصرية المتاحة لتهيئة السيرفر:')
+        .setDescription('إليك الشرح لجميع الميزات والاختصارات الحصرية المتاحة لك الآن لتهيئة السيرفر:')
         .setColor('#5865F2')
         .addFields(
             { name: '📂 أولاً: اختصارات اللوج وقنوات المراقبة والمنع', value:
@@ -165,6 +179,7 @@ function getHelpEmbed() {
         .setTimestamp();
 }
 
+// قراءة دخول الأعضاء (الترحيب + اللوج + الرتب التلقائية)
 client.on('guildMemberAdd', async member => {
     if (member.user.bot) {
         if (autoBotRoleId) {
@@ -194,6 +209,7 @@ client.on('guildMemberAdd', async member => {
     }
 });
 
+// قراءة خروج ومغادرة الأعضاء ورسم بطاقة المغادرة
 client.on('guildMemberRemove', async member => {
     if (byeChannelId) {
         const byeChannel = member.guild.channels.cache.get(byeChannelId);
@@ -211,6 +227,7 @@ client.on('guildMemberRemove', async member => {
     }
 });
 
+// دالة مساعدة لتحديد قنوات اللوج أو الإعداد بيسر وسهولة
 async function handleConfigSetup(message, prefix, name) {
     const args = message.content.slice(prefix.length).trim().split(/ +/);
     const channelMention = message.mentions.channels.first();
@@ -228,6 +245,7 @@ async function handleConfigSetup(message, prefix, name) {
     return targetChannel.id;
 }
 
+// الاستماع للرسائل وتطبيق كامل العمليات المطلوبة بدقة تامة
 client.on('messageCreate', async message => {
     if (message.author.bot) return;
 
@@ -484,7 +502,7 @@ client.on('messageCreate', async message => {
                 return;
             } else {
                 state.step = 'get_image';
-                const nextPrompt = await message.reply(`✅ تم الانهاء من إعداد جميع الأقسام بنجاح!\n\n🖼 يرجى وضع **رابط الصورة (Image URL)** للبوكس الرئيسي (إذا كنت لا تريد صورة اكتب: \`لا\`):`);
+                const nextPrompt = await message.reply(`✅ تم الانتهاء من إعداد جميع الأقسام بنجاح!\n\n🖼 يرجى وضع **رابط الصورة (Image URL)** للبوكس الرئيسي (إذا كنت لا تريد صورة اكتب: \`لا\`):`);
                 state.messagesToDelete.push(nextPrompt.id);
                 return;
             }
@@ -647,7 +665,7 @@ client.on('messageCreate', async message => {
         }
     }
 
-    // حماية روم الصور فقط ومسح النصوص وتنبيه العضو واللوج التلقائي للتخريب
+    // 8. حماية روم الصور فقط ومسح النصوص وتنبيه العضو واللوج التلقائي للتخريب
     if (picOnlyChannelId && message.channel.id === picOnlyChannelId) {
         const hasAttachment = message.attachments.size > 0;
         const hasEmbedImage = message.embeds.some(e => e.image || e.thumbnail);
@@ -679,59 +697,8 @@ client.on('messageCreate', async message => {
     }
 });
 
-// معالجة اللوج والتقييمات والتذاكر
-async function sendTicketLog(guild, channelName, creatorId, claimerId, closerUser) {
-    if (!logTicketChannelId) return;
-    const logChannel = guild.channels.cache.get(logTicketChannelId);
-    if (!logChannel) return;
-
-    const creator = guild.members.cache.get(creatorId);
-    const claimer = claimerId ? guild.members.cache.get(claimerId) : 'لا يوجد (لم تُستلم التذكرة)';
-
-    const logEmbed = new EmbedBuilder()
-        .setTitle('📂 سجل إغلاق تذكرة | Ticket Logs')
-        .setColor('#e74c3c')
-        .addFields(
-            { name: '📝 اسم التذكرة', value: `\`${channelName}\``, inline: true },
-            { name: '👤 منشئ التذكرة', value: creator ? `${creator}` : `\`أيدي: ${creatorId}\``, inline: true },
-            { name: '🙋‍♂️ الإداري المستلم', value: claimerId ? `${claimer}` : '`لم يتم الاستلام`', inline: true },
-            { name: '🔒 مغلق التذكرة', value: `${closerUser}`, inline: true }
-        )
-        .setTimestamp();
-
-    try {
-        await logChannel.send({ embeds: [logEmbed] });
-    } catch (err) {
-        console.error(err);
-    }
-}
-
-async function sendRatingLog(guild, creator, rating, claimerName) {
-    if (!logTicketChannelId) return; // يرسل اللوج في روم التذاكر المخصصة
-    const logChannel = guild.channels.cache.get(logTicketChannelId);
-    if (!logChannel) return;
-
-    const ratingStars = '⭐'.repeat(rating);
-
-    const embed = new EmbedBuilder()
-        .setTitle('⭐ تقييم تكت فني جديد | Feedback')
-        .setColor('#f1c40f')
-        .addFields(
-            { name: '👤 العضو المقيم', value: `${creator}`, inline: true },
-            { name: '🙋‍♂️ الإداري المسؤول', value: `\`${claimerName}\``, inline: true },
-            { name: '📊 التقييم المستلم', value: `${ratingStars} (${rating}/5)`, inline: true }
-        )
-        .setTimestamp();
-
-    try {
-        await logChannel.send({ embeds: [embed] });
-    } catch (err) {
-        console.error(err);
-    }
-}
-
 client.on('interactionCreate', async interaction => {
-    // فتح تكت من القوائم المنسدلة المتعددة المستقلة
+    // فتح تكت من القوائم المنسدلة المتعددة المستقلة والمحفوظ فيها معلومات القسم والرتب
     if (interaction.isStringSelectMenu()) {
         if (interaction.customId.startsWith('multi_t_menu_')) {
             await interaction.deferReply({ flags: MessageFlags.Ephemeral });
