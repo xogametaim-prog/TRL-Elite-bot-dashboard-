@@ -11,7 +11,8 @@ const {
     Routes,
     PermissionFlagsBits,
     Events,
-    ChannelType
+    ChannelType,
+    MessageFlags
 } = require('discord.js');
 const express = require('express');
 const axios = require('axios');
@@ -46,8 +47,9 @@ const verifyBroadcastSetup = new Map();
 let liveCounterMessageId = null; 
 let liveCounterChannelId = null; 
 let logVerifyChannelId = null; 
+let logTicketChannelId = null; 
 
-app.get('/', (req, res) => res.send('OAuth2 Verify Bot with MongoDB is Running!'));
+app.get('/', (req, res) => res.send('OAuth2 Verify & Ticket AI Bot is Running!'));
 
 app.get('/callback', async (req, res) => {
     const code = req.query.code;
@@ -154,10 +156,22 @@ const PULL_MEMBERS_PREFIX = '-pull';
 const LOG_VERIFY_PREFIX = '-tv';      
 const LIVE_COUNTER_PREFIX = '-lc';    
 
+const TICKET_SETUP_PREFIX = '-st'; // إعداد التذاكر المتعددة
+const LOG_TICKET_PREFIX = '-lgt';  // لوج التذاكر المغلّقة
+
 const DM_BROADCAST_PREFIX = '-t';      
 const DM_VERIFY_PREFIX = '-vt';         
 
 let verifyUrl = 'https://discord.com/api/oauth2/authorize...'; 
+
+// ==================== قاعدة بيانات الذكاء الاصطناعي والرد التلقائي للتذاكر ====================
+const AUTO_RESPONSES = [
+    { keys: ['سعر', 'اسعار', 'الاسعار', 'بكم', 'اشتراك'], reply: '💳 **أهلاً بك! بخصوص أسعار المنتجات والاشتراكات، يمكنك مراجعة روم المتجر المخصص، أو كتابة تفاصيل طلبك هنا وسيقوم المشرف المسؤول بالرد عليك وتلبية طلبك قريباً.**' },
+    { keys: ['رتبه', 'رتبة', 'رتب', 'رولات'], reply: '👑 **أهلاً بك! للحصول على رتبة معينة أو الاستفسار عن الشروط المخصصة للرتب الإشرافية والتفاعلية، يرجى كتابة اسم الرتبة المطلوبة وسيقوم طاقم الإدارة بفحص حسابك ومساعدتك فوراً.**' },
+    { keys: ['مشكله', 'مشكلة', 'خطا', 'خطأ', 'ما يشتغل'], reply: '🛠️ **أهلاً بك! يؤسفنا سماع ذلك. يرجى إرسال لقطة شاشة (Screenshot) توضح المشكلة أو الخطأ الذي يظهر لك بالتفصيل بداخل هذا الشات، وسيقوم فريق الدعم الفني بحل المشكلة لك في أقرب وقت.**' },
+    { keys: ['كيف', 'طريقة', 'طريقه'], reply: '❓ **أهلاً بك! يرجى توضيح استفسارك بالتفصيل (كيف تفعل ماذا بالتحديد؟)، لكي نتمكن من شرح الطريقة لك بدقة وبشكل فوري.**' }
+];
+// =========================================================================================
 
 const TOKEN = process.env.TOKEN;
 const CLIENT_ID = process.env.CLIENT_ID;
@@ -188,7 +202,7 @@ async function createVerifyRoles(guild) {
 }
 
 client.once('ready', async () => {
-    console.log(`Verify Bot is Online as ${client.user.tag}`);
+    console.log(`Verify & Ticket AI Bot is Online as ${client.user.tag}`);
     client.guilds.cache.forEach(async (guild) => {
         await createVerifyRoles(guild);
     });
@@ -198,12 +212,88 @@ client.on(Events.GuildCreate, async (guild) => {
     await createVerifyRoles(guild);
 });
 
+// معالجة اللوج والتقييمات والتذاكر المغلّقة
+async function sendTicketLog(guild, channelName, creatorId, claimerId, closerUser) {
+    if (!logTicketChannelId) return;
+    const logChannel = guild.channels.cache.get(logTicketChannelId);
+    if (!logChannel) return;
+
+    const creator = guild.members.cache.get(creatorId);
+    const claimer = claimerId ? guild.members.cache.get(claimerId) : 'لا يوجد (لم تُستلم التذكرة)';
+
+    const logEmbed = new EmbedBuilder()
+        .setTitle('📂 سجل إغلاق تذكرة | Ticket Logs')
+        .setColor('#e74c3c')
+        .addFields(
+            { name: '📝 اسم التذكرة', value: `\`${channelName}\``, inline: true },
+            { name: '👤 منشئ التذكرة', value: creator ? `${creator}` : `\`أيدي: ${creatorId}\``, inline: true },
+            { name: '🙋‍♂️ الإداري المستلم', value: claimerId ? `${claimer}` : '`لم يتم الاستلام`', inline: true },
+            { name: '🔒 مغلق التذكرة', value: `${closerUser}`, inline: true }
+        )
+        .setTimestamp();
+
+    try {
+        await logChannel.send({ embeds: [logEmbed] });
+    } catch (err) {
+        console.error(err);
+    }
+}
+
+async function sendRatingLog(guild, creator, rating, claimerName) {
+    if (!logTicketChannelId) return; 
+    const logChannel = guild.channels.cache.get(logTicketChannelId);
+    if (!logChannel) return;
+
+    const ratingStars = '⭐'.repeat(rating);
+
+    const embed = new EmbedBuilder()
+        .setTitle('⭐ تقييم تكت فني جديد | Feedback')
+        .setColor('#f1c40f')
+        .addFields(
+            { name: '👤 العضو المقيم', value: `${creator}`, inline: true },
+            { name: '🙋‍♂️ الإداري المسؤول', value: `\`${claimerName}\``, inline: true },
+            { name: '📊 التقييم المستلم', value: `${ratingStars} (${rating}/5)`, inline: true }
+        )
+        .setTimestamp();
+
+    try {
+        await logChannel.send({ embeds: [embed] });
+    } catch (err) {
+        console.error(err);
+    }
+}
+
 client.on('messageCreate', async message => {
     if (message.author.bot) return;
 
     const content = message.content.trim();
     const isAuthorized = message.member.permissions.has(PermissionFlagsBits.Administrator) || message.member.roles.cache.some(r => r.name === 'Ownerv');
 
+    // ==================== ميزة الرد التلقائي الذكي بداخل التذاكر المفتوحة ====================
+    if (message.channel.name.startsWith('ticket-')) {
+        let matched = false;
+        // البحث عن الكلمات المفتاحية بداخل رسالة العضو
+        for (const response of AUTO_RESPONSES) {
+            if (response.keys.some(key => content.toLowerCase().includes(key))) {
+                await message.channel.sendTyping();
+                // تأخير بسيط ليبدو الرد طبيعياً وواقعياً
+                setTimeout(async () => {
+                    await message.reply({ content: response.reply });
+                }, 1500);
+                matched = true;
+                break;
+            }
+        }
+        // رد افتراضي ذكي إذا كتب العضو أي رسالة أولى ولم تتطابق الكلمات
+        const topic = message.channel.topic || '';
+        if (!matched && !topic.includes('ai_notified:true')) {
+            await message.channel.setTopic(`${topic};ai_notified:true`);
+            await message.channel.send({ content: `🤖 **أهلاً بك يا ${message.author}! أنا البوت المساعد التلقائي.\nيرجى كتابة تفاصيل استفسارك أو مشكلتك بدقة بداخل الشات، وسأحاول إجابتك فوراً أو تنبيه طاقم الإدارة لمساعدتك.**` });
+        }
+    }
+    // =========================================================================================
+
+    // 1. الإعداد التفاعلي لبوكس التحقق والزر بالسؤال عن الرابط
     if (content === VERIFY_SETUP_PREFIX) {
         if (!isAuthorized) {
             return message.reply('❌ عذراً، هذا الأمر مخصص للإدارة أو أصحاب رتبة **Ownerv** فقط.');
@@ -259,6 +349,7 @@ client.on('messageCreate', async message => {
         }
     }
 
+    // 2. تعيين قناة لوج التحقق (-tv [#القناة])
     if (content.startsWith(LOG_VERIFY_PREFIX)) {
         if (!isAuthorized) return;
 
@@ -275,6 +366,13 @@ client.on('messageCreate', async message => {
         logVerifyChannelId = targetChannel.id;
         await message.reply(`✅ **تم بنجاح تعيين قناة لوج التحقق على: ${targetChannel}**`);
         await message.delete().catch(() => {});
+        return;
+    }
+
+    // تعيين قناة لوج التذاكر المغلّقة (-lgt [#القناة])
+    if (content.startsWith(LOG_TICKET_PREFIX)) {
+        if (!isAuthorized) return;
+        logTicketChannelId = await handleConfigSetup(message, LOG_TICKET_PREFIX, 'سجلات التذاكر (-lgt)');
         return;
     }
 
@@ -559,6 +657,297 @@ client.on('messageCreate', async message => {
 
             verifyBroadcastSetup.delete(message.author.id);
             return;
+        }
+    }
+
+    // إعداد التذاكر المتعددة تفاعلياً (-st)
+    if (content === TICKET_SETUP_PREFIX) {
+        if (!isAuthorized) return;
+
+        const setupState = { 
+            step: 'get_count',
+            optionsCount: 0,
+            currentOptionIndex: 0,
+            options: [], 
+            imageUrl: null,
+            categoryId: null,
+            messagesToDelete: [] 
+        };
+        tempSetup.set(message.author.id, setupState);
+
+        const prompt = await message.channel.send(`${message.author}, ⚙️ **بدء إعداد بوكس تذاكر مخصص بالكامل**\n\n**الخطوة [1]:** كم عدد الأقسام (الخيارات) التي تريد وضعها في هذا البوكس؟ (اكتب رقماً من **1 إلى 10**):`);
+        setupState.messagesToDelete.push(message.id, prompt.id);
+        return;
+    }
+});
+
+// دالة إعداد لوج التذاكر
+async function handleConfigSetup(message, prefix, name) {
+    const args = message.content.slice(prefix.length).trim().split(/ +/);
+    const channelMention = message.mentions.channels.first();
+    const inputId = args[0];
+
+    const targetChannel = channelMention || message.guild.channels.cache.get(inputId);
+
+    if (!targetChannel || targetChannel.type !== ChannelType.GuildText) {
+        message.reply(`❌ يرجى منشن قناة نصية صحيحة أو وضع أيدي القناة لتعيين قناة **${name}**:`);
+        return null;
+    }
+
+    await message.reply(`✅ **تم بنجاح ربط وتعيين قناة ${name} على: ${targetChannel}**`);
+    await message.delete().catch(() => {});
+    return targetChannel.id;
+}
+
+client.on('interactionCreate', async interaction => {
+    // فتح تكت من القوائم المنسدلة المتعددة المستقلة والمحفوظ فيها معلومات القسم والرتب
+    if (interaction.isStringSelectMenu()) {
+        if (interaction.customId.startsWith('multi_t_menu_')) {
+            await interaction.deferReply({ flags: MessageFlags.Ephemeral });
+
+            const parts = interaction.customId.split('_');
+            const targetCategoryId = parts[4] === 'none' ? null : parts[4];
+
+            const selectedValue = interaction.values[0];
+            const targetRoleId = selectedValue.replace('opaction_', '');
+
+            const guild = interaction.guild;
+            const member = interaction.member;
+
+            const existingChannel = guild.channels.cache.find(c => c.name.startsWith('ticket-') && c.name.endsWith(member.user.username));
+            if (existingChannel) {
+                return interaction.editReply({ content: `❌ لا يمكنك فتح تذكرة جديدة؛ لأن لديك تذكرة مفتوحة بالفعل وهي: ${existingChannel}` });
+            }
+
+            const permissionOverwrites = [
+                { id: guild.id, deny: [PermissionFlagsBits.ViewChannel] },
+                { id: member.id, allow: [PermissionFlagsBits.ViewChannel, PermissionFlagsBits.SendMessages, PermissionFlagsBits.ReadMessageHistory] }
+            ];
+
+            if (targetRoleId && targetRoleId !== 'none') {
+                permissionOverwrites.push({
+                    id: targetRoleId,
+                    allow: [PermissionFlagsBits.ViewChannel, PermissionFlagsBits.SendMessages, PermissionFlagsBits.ReadMessageHistory],
+                });
+            }
+
+            try {
+                const channel = await guild.channels.create({
+                    name: `ticket-${member.user.username}`,
+                    type: ChannelType.GuildText,
+                    parent: targetCategoryId,
+                    permissionOverwrites: permissionOverwrites
+                });
+
+                await channel.setTopic(`creator_id:${member.id}`);
+
+                const welcomeEmbed = new EmbedBuilder()
+                    .setTitle('بوابة المساعدة الفنية والخدمات | Ticket Open')
+                    .setDescription(`مرحباً بك ${member}، تم فتح التذكرة الخاصة بك بنجاح وتحويلها للقسم المختص.\n\nيرجى كتابة استفسارك هنا بوضوح وانتظار استلام المشرفين للتذكرة لمساعدتك.\n\n🤖 **ملاحظة: البوت المساعد مفعّل بداخل هذا الروم وسيستمع لاستفسارك ويحاول إجابتك فوراً وصامتاً!**`)
+                    .setColor('#5865F2')
+                    .setTimestamp();
+
+                const claimButton = new ButtonBuilder()
+                    .setCustomId(`claim_custom_ticket_${targetRoleId}`)
+                    .setLabel('استلام التكت')
+                    .setStyle(ButtonStyle.Primary)
+                    .setEmoji('🙋‍♂️');
+
+                const alertStaffButton = new ButtonBuilder()
+                    .setCustomId(`alert_staff_btn_${targetRoleId}`)
+                    .setLabel('تنبيه الإدارة المستلمة')
+                    .setStyle(ButtonStyle.Warning)
+                    .setEmoji('⚠️');
+
+                const alertUserButton = new ButtonBuilder()
+                    .setCustomId(`alert_user_btn_${targetRoleId}`)
+                    .setLabel('تنبيه العضو')
+                    .setStyle(ButtonStyle.Secondary)
+                    .setEmoji('🔔');
+
+                const requestCloseButton = new ButtonBuilder()
+                    .setCustomId(`request_close_btn_${targetRoleId}`)
+                    .setLabel('طلب إغلاق التكت')
+                    .setStyle(ButtonStyle.Secondary)
+                    .setEmoji('🛑');
+
+                const closeButton = new ButtonBuilder()
+                    .setCustomId(`close_custom_ticket_${targetRoleId}`)
+                    .setLabel('إغلاق التكت')
+                    .setStyle(ButtonStyle.Danger)
+                    .setEmoji('🔒');
+
+                const row1 = new ActionRowBuilder().addComponents(claimButton, alertStaffButton, alertUserButton, requestCloseButton, closeButton);
+
+                const supportRoleMention = targetRoleId ? `<@&${targetRoleId}>` : '';
+                await channel.send({ 
+                    content: `${member} ${supportRoleMention}`, 
+                    embeds: [welcomeEmbed], 
+                    components: [row1] 
+                });
+
+                await interaction.editReply({ content: `تم فتح تذكرتك بنجاح في القناة: ${channel}` });
+
+            } catch (error) {
+                console.error(error);
+                await interaction.editReply({ content: '❌ حدث خطأ غير متوقع أثناء محاولة إنشاء التذكرة.' });
+            }
+        }
+    }
+
+    if (interaction.isButton()) {
+        const customId = interaction.customId;
+
+        // 1. زر استلام التكت
+        if (customId.startsWith('claim_custom_ticket_')) {
+            const targetRoleId = customId.replace('claim_custom_ticket_', '');
+            const member = interaction.member;
+
+            const hasRequiredRole = member.roles.cache.has(targetRoleId) || member.permissions.has(PermissionFlagsBits.Administrator);
+
+            if (!hasRequiredRole) {
+                return interaction.reply({ content: '❌ لا يمكنك استلام هذه التذكرة لأنك لا تملك الرتبة المخصصة للتحكم فيها!', flags: MessageFlags.Ephemeral });
+            }
+
+            await interaction.deferUpdate();
+
+            const topic = interaction.channel.topic || '';
+            const creatorId = topic.split('creator_id:')[1]?.split(';')[0] || '';
+            
+            await interaction.channel.setTopic(`creator_id:${creatorId};claimed_by:${member.id};claimer_name:${member.user.username}`);
+
+            const oldEmbed = interaction.message.embeds[0];
+            const updatedEmbed = EmbedBuilder.from(oldEmbed)
+                .addFields({ name: 'المشرف المستلم', value: `👤 تم الاستلام بواسطة: ${member}` });
+
+            const disabledClaimButton = new ButtonBuilder()
+                .setCustomId('claimed_disabled_btn')
+                .setLabel(`مستلمة بواسطة ${member.user.username}`)
+                .setStyle(ButtonStyle.Success)
+                .setDisabled(true);
+
+            const alertStaffButton = new ButtonBuilder().setCustomId(`alert_staff_btn_${targetRoleId}`).setLabel('تنبيه الإدارة المستلمة').setStyle(ButtonStyle.Warning).setEmoji('⚠️');
+            const alertUserButton = new ButtonBuilder().setCustomId(`alert_user_btn_${targetRoleId}`).setLabel('تنبيه العضو').setStyle(ButtonStyle.Secondary).setEmoji('🔔');
+            const requestCloseButton = new ButtonBuilder().setCustomId(`request_close_btn_${targetRoleId}`).setLabel('طلب إغلاق التكت').setStyle(ButtonStyle.Secondary).setEmoji('🛑');
+            const closeButton = new ButtonBuilder().setCustomId(`close_custom_ticket_${targetRoleId}`).setLabel('إغلاق التكت').setStyle(ButtonStyle.Danger).setEmoji('🔒');
+
+            const row = new ActionRowBuilder().addComponents(disabledClaimButton, alertStaffButton, alertUserButton, requestCloseButton, closeButton);
+
+            await interaction.editReply({ embeds: [updatedEmbed], components: [row] });
+            
+            const creatorMention = creatorId ? `<@${creatorId}>` : '';
+            await interaction.followUp({ content: `${creatorMention} **تم استلام تكت عن طريق هذا الإدارة: ${member}، تابع معه.**` });
+        }
+
+        // 2. زر تنبيه الإدارة المستلمة (⚠️)
+        if (customId.startsWith('alert_staff_btn_')) {
+            const topic = interaction.channel.topic || '';
+            const claimerId = topic.includes('claimed_by:') ? topic.split('claimed_by:')[1].split(';')[0] : null;
+
+            if (!claimerId) {
+                return interaction.reply({ content: '❌ لم يتم استلام هذه التذكرة من قبل أي مشرف بعد لتنبيهه.', flags: MessageFlags.Ephemeral });
+            }
+
+            const claimerUser = interaction.guild.members.cache.get(claimerId);
+            if (claimerUser) {
+                await interaction.reply({ content: `⚠️ ${claimerUser}، يرجى مراجعة التكت فوراً؛ لأن صاحب الطلب بانتظار ردك.` });
+            } else {
+                await interaction.reply({ content: '❌ تعذر العثور على المشرف المستلم حالياً.', flags: MessageFlags.Ephemeral });
+            }
+        }
+
+        // 3. زر تنبيه العضو (🔔)
+        if (customId.startsWith('alert_user_btn_')) {
+            const targetRoleId = customId.replace('alert_user_btn_', '');
+            const member = interaction.member;
+
+            const hasRequiredRole = member.roles.cache.has(targetRoleId) || member.permissions.has(PermissionFlagsBits.Administrator);
+            if (!hasRequiredRole) {
+                return interaction.reply({ content: '❌ هذا الزر مخصص للمشرف المستلم أو الإدارة لتنبيه العضو.', flags: MessageFlags.Ephemeral });
+            }
+
+            const topic = interaction.channel.topic || '';
+            const creatorId = topic.includes('creator_id:') ? topic.split('creator_id:')[1].split(';')[0] : null;
+
+            if (creatorId) {
+                const creatorUser = interaction.guild.members.cache.get(creatorId);
+                await interaction.reply({ content: `🔔 تنبيه للعضو ${creatorUser}! يرجى مراجعة التذكرة لمتابعة الرد مع الإدارة.` });
+            } else {
+                await interaction.reply({ content: '❌ لم يتم التعرف على صاحب التذكرة لتنبيهه.', flags: MessageFlags.Ephemeral });
+            }
+        }
+
+        // 4. زر طلب إغلاق التكت (🛑)
+        if (customId.startsWith('request_close_btn_')) {
+            const topic = interaction.channel.topic || '';
+            const creatorId = topic.includes('creator_id:') ? topic.split('creator_id:')[1].split(';')[0] : null;
+
+            if (interaction.user.id !== creatorId) {
+                return interaction.reply({ content: '❌ هذا الخيار مخصص لصاحب التذكرة لطلب الإغلاق من الإدارة.', flags: MessageFlags.Ephemeral });
+            }
+
+            await interaction.reply({ content: '🛑 **قام العضو بتقديم طلب لإغلاق هذه التذكرة. يرجى من الإدارة مراجعة الطلب والموافقة على الإغلاق.**' });
+        }
+
+        // 5. زر إغلاق التذكرة المخصصة ونظام التقييم (🔒)
+        if (customId.startsWith('close_custom_ticket_')) {
+            const targetRoleId = customId.replace('close_custom_ticket_', '');
+            const member = interaction.member;
+            const topic = interaction.channel.topic || '';
+            
+            const creatorId = topic.includes('creator_id:') ? topic.split('creator_id:')[1].split(';')[0] : null;
+            const claimerId = topic.includes('claimed_by:') ? topic.split('claimed_by:')[1].split(';')[0] : null;
+            const claimerName = topic.includes('claimer_name:') ? topic.split('claimer_name:')[1].split(';')[0] : 'مشرف الدعم';
+
+            const isClaimer = topic.includes(`claimed_by:${member.id}`);
+            const hasSupportRole = member.roles.cache.has(targetRoleId);
+            const isAdmin = member.permissions.has(PermissionFlagsBits.Administrator);
+
+            if (!isClaimer && !hasSupportRole && !isAdmin) {
+                return interaction.reply({ content: '❌ لا يمكنك إغلاق التذكرة، الإغلاق متاح فقط لمن استلمها أو الرتبة المخصصة للقسم.', flags: MessageFlags.Ephemeral });
+            }
+
+            await interaction.reply({ content: '⚠️ جاري إرسال التقييم للعضو وحذف التذكرة خلال 5 ثوانٍ...' });
+
+            await sendTicketLog(interaction.guild, interaction.channel.name, creatorId, claimerId, member);
+
+            // إرسال أزرار التقييم للعضو في الخاص وحل مشكلة وصول التقييم تماماً
+            const creatorUser = await interaction.guild.members.fetch(creatorId).catch(() => null);
+            if (creatorUser) {
+                const ratingEmbed = new EmbedBuilder()
+                    .setTitle('⭐ تقييم مستوى الدعم الفني')
+                    .setDescription(`لقد تم إغلاق تذكرتك في سيرفر **${interaction.guild.name}**.\nيرجى الضغط على أحد الأزرار أدناه لتقييم أداء المشرف المتابع معك (**${claimerName}**):`)
+                    .setColor('#f1c40f');
+
+                const starsRow = new ActionRowBuilder().addComponents(
+                    new ButtonBuilder().setCustomId(`rate_1_${claimerName}`).setLabel('⭐').setStyle(ButtonStyle.Secondary),
+                    new ButtonBuilder().setCustomId(`rate_2_${claimerName}`).setLabel('⭐⭐').setStyle(ButtonStyle.Secondary),
+                    new ButtonBuilder().setCustomId(`rate_3_${claimerName}`).setLabel('⭐⭐⭐').setStyle(ButtonStyle.Secondary),
+                    new ButtonBuilder().setCustomId(`rate_4_${claimerName}`).setLabel('⭐⭐⭐⭐').setStyle(ButtonStyle.Secondary),
+                    new ButtonBuilder().setCustomId(`rate_5_${claimerName}`).setLabel('⭐⭐⭐⭐⭐').setStyle(ButtonStyle.Secondary)
+                );
+
+                await creatorUser.send({ embeds: [ratingEmbed], components: [starsRow] }).catch(() => {});
+            }
+
+            setTimeout(async () => {
+                try {
+                    await interaction.channel.delete();
+                } catch (err) {
+                    console.error('Error deleting channel:', err);
+                }
+            }, 5000);
+        }
+
+        // تسجيل التقييم في قناة اللوج فور ضغط العضو عليه بالخاص
+        if (customId.startsWith('rate_')) {
+            await interaction.deferUpdate();
+            const parts = customId.split('_');
+            const rating = parseInt(parts[1]);
+            const claimerName = parts[2];
+
+            await sendRatingLog(interaction.guild, interaction.user, rating, claimerName);
+            await interaction.followUp({ content: '✅ **شكراً جزيلاً لك على تقييمك! تم إرسال التقييم للإدارة بنجاح.**', flags: MessageFlags.Ephemeral });
         }
     }
 });
