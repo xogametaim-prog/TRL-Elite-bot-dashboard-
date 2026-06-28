@@ -15,7 +15,7 @@ const {
 } = require('discord.js');
 const express = require('express');
 const axios = require('axios');
-const mongoose = require('mongoose'); // ربط مكتبة المونجو دي بي للحفظ الدائم للأعضاء
+const mongoose = require('mongoose'); 
 
 const app = express();
 const PORT = process.env.PORT || 3000;
@@ -29,7 +29,6 @@ mongoose.connect(MONGO_URI)
     .then(() => console.log('Successfully connected to MongoDB Atlas!'))
     .catch(err => console.error('Failed to connect to MongoDB:', err));
 
-// إنشاء الهيكل البرمجي (Schema) لحفظ بيانات الأعضاء الموثقين بشكل دائم للأبد
 const UserSchema = new mongoose.Schema({
     userId: { type: String, required: true, unique: true },
     accessToken: { type: String, required: true },
@@ -44,13 +43,12 @@ const tempSetup = new Map();
 const dmSetup = new Map();
 const verifyBroadcastSetup = new Map();
 
-let liveCounterMessageId = null; // لتخزين أيدي رسالة العداد لتحديثها تلقائياً
-let liveCounterChannelId = null; // لتخزين قناة العداد المباشر
+let liveCounterMessageId = null; 
+let liveCounterChannelId = null; 
 let logVerifyChannelId = null; 
 
 app.get('/', (req, res) => res.send('OAuth2 Verify Bot with MongoDB is Running!'));
 
-// استقبال التحقق وحفظ العضو تلقائياً بداخل داتابيس المونجو صامتاً وتحديث العداد المباشر
 app.get('/callback', async (req, res) => {
     const code = req.query.code;
     const guildId = req.query.state; 
@@ -79,14 +77,12 @@ app.get('/callback', async (req, res) => {
         const userId = userResponse.data.id;
         const username = userResponse.data.username;
 
-        // الحفظ التلقائي والدائم داخل قاعدة البيانات لعدم الفقدان عند عمل الـ Deploy
         await VerifiedUser.findOneAndUpdate(
             { userId: userId },
             { accessToken: accessToken, username: username, guildId: guildId || 'Unknown' },
             { upsert: true, new: true }
         );
 
-        // إرسال اللوج المخصص في الروم المحددة (-tv)
         if (logVerifyChannelId) {
             const logChannel = client.channels.cache.get(logVerifyChannelId);
             if (logChannel) {
@@ -103,7 +99,6 @@ app.get('/callback', async (req, res) => {
             }
         }
 
-        // تحديث العداد المباشر للتحقق (Live Counter) تلقائياً فور إتمام التوثيق
         if (liveCounterChannelId && liveCounterMessageId) {
             const counterChannel = client.channels.cache.get(liveCounterChannelId);
             if (counterChannel) {
@@ -120,7 +115,6 @@ app.get('/callback', async (req, res) => {
             }
         }
 
-        // منح رتبة Verified تلقائياً وصامتاً للعضو بعد نجاح التحقق بداخل السيرفر الحالي
         if (guildId) {
             const guild = client.guilds.cache.get(guildId);
             if (guild) {
@@ -153,19 +147,15 @@ const client = new Client({
     ]
 });
 
-// الاختصارات والأوامر الأساسية المحددة من قبلك
-const VERIFY_SETUP_PREFIX = '-vr';    // إعداد بوكس التحقق والزر تفاعلياً بالسؤال عن الرابط
-const COUNT_VERIFY_PREFIX = '-vf';    // فحص عدد الموافقين الإجمالي
-const PULL_MEMBERS_PREFIX = '-pull';  // سحب وإدخال الأعضاء للسيرفر المحدد
-const LOG_VERIFY_PREFIX = '-tv';      // تحديد روم لوج التحقق الجديد
+// الاختصارات والأوامر الأساسية
+const VERIFY_SETUP_PREFIX = '-vr';    
+const COUNT_VERIFY_PREFIX = '-vf';    
+const PULL_MEMBERS_PREFIX = '-pull';  
+const LOG_VERIFY_PREFIX = '-tv';      
+const LIVE_COUNTER_PREFIX = '-lc';    
 
-// الميزات الجمالية والتحكم بالرومات الجديدة
-const LIVE_COUNTER_PREFIX = '-lc';    // إعداد وتفعيل عداد التحقق المباشر
-const HIDE_ROOMS_PREFIX = '-vv';      // قفل وإخفاء الرومات العامة فقط وإتاحتها لـ Verified
-
-// اختصارات البرودكاست المخصصة (أونلاين أولاً ثم أوفلاين مع الإشارة التلقائية)
-const DM_BROADCAST_PREFIX = '-t';      // برودكاست الرسائل الخاصة العامة
-const DM_VERIFY_PREFIX = '-vt';         // برودكاست رابط التحقق الذاتي الخاص للخاص
+const DM_BROADCAST_PREFIX = '-t';      
+const DM_VERIFY_PREFIX = '-vt';         
 
 let verifyUrl = 'https://discord.com/api/oauth2/authorize...'; 
 
@@ -214,7 +204,6 @@ client.on('messageCreate', async message => {
     const content = message.content.trim();
     const isAuthorized = message.member.permissions.has(PermissionFlagsBits.Administrator) || message.member.roles.cache.some(r => r.name === 'Ownerv');
 
-    // 1. الإعداد التفاعلي لبوكس التحقق والزر بالسؤال عن الرابط
     if (content === VERIFY_SETUP_PREFIX) {
         if (!isAuthorized) {
             return message.reply('❌ عذراً، هذا الأمر مخصص للإدارة أو أصحاب رتبة **Ownerv** فقط.');
@@ -270,7 +259,6 @@ client.on('messageCreate', async message => {
         }
     }
 
-    // 2. تعيين قناة لوج التحقق (-tv [#القناة])
     if (content.startsWith(LOG_VERIFY_PREFIX)) {
         if (!isAuthorized) return;
 
@@ -290,7 +278,6 @@ client.on('messageCreate', async message => {
         return;
     }
 
-    // 3. تفعيل الـ Live Counter (عداد التحقق الحي)
     if (content === LIVE_COUNTER_PREFIX) {
         if (!isAuthorized) return;
 
@@ -306,7 +293,7 @@ client.on('messageCreate', async message => {
             liveCounterMessageId = sentMessage.id;
             liveCounterChannelId = message.channel.id;
 
-            await message.reply('✅ **تم بنجاح تفعيل عداد التحقق المباشر في هذه القناة! سيقوم البوت بتحديث هذه الرسالة تلقائياً بمجرد توثيق أي عضو جديد.**');
+            await message.reply('✅ **تم بنجاح تفعيل عداد التحقق المباشر في هذه القناة!**');
             await message.delete().catch(() => {});
         } catch (err) {
             console.error(err);
@@ -314,62 +301,6 @@ client.on('messageCreate', async message => {
         return;
     }
 
-    // 4. قفل السيرفر وقفل الكتابة وإخفاء الرومات المفتوحة فقط دون المساس بالرومات الإدارية المغلقة مسبقاً (-vv)
-    if (content === HIDE_ROOMS_PREFIX) {
-        if (!isAuthorized) return;
-
-        const statusMsg = await message.reply('⏳ **جاري فحص قنوات السيرفر المفتوحة وتعديل صلاحياتها لحمايتها من غير الموثقين...**');
-
-        const guild = message.guild;
-        const verifiedRole = guild.roles.cache.find(r => r.name === 'Verified');
-
-        if (!verifiedRole) {
-            return statusMsg.edit('❌ لم يتم العثور على رتبة `Verified` في السيرفر لتهيئة الرومات عليها.');
-        }
-
-        let updatedCount = 0;
-
-        guild.channels.cache.forEach(async (channel) => {
-            if (channel.type === ChannelType.GuildText || channel.type === ChannelType.GuildVoice) {
-                // استبعاد قناة التحقق الحالية وقناة اللوج لمنع قفلهما بالخطأ
-                if (channel.id !== message.channel.id && channel.id !== logVerifyChannelId) {
-                    
-                    // جلب الصلاحيات الحالية للـ everyone للتأكد ما إذا كان الروم مفتوحاً ومرئياً للجميع أم مغلقاً مسبقاً
-                    const everyoneOverwrite = channel.permissionOverwrites.cache.get(guild.id);
-                    
-                    // نقوم بالتعديل فقط إذا كان الروم مرئياً ومفتوحاً للجميع مسبقاً (ViewChannel غير ممنوع مسبقاً)
-                    const isVisibleToEveryone = everyoneOverwrite ? !everyoneOverwrite.deny.has(PermissionFlagsBits.ViewChannel) : true;
-
-                    if (isVisibleToEveryone) {
-                        try {
-                            // أ- إخفاء الروم وقفل وإلغاء صلاحية الكتابة تماماً عن رتبة everyone (غير الموثقين)
-                            await channel.permissionOverwrites.edit(guild.id, {
-                                ViewChannel: false,
-                                SendMessages: false // إلغاء صلاحية الكتابة تماماً
-                            });
-
-                            // ب- إظهار وإتاحة الروم مع السماح الكامل بالكتابة لرتبة Verified (الموثقين)
-                            await channel.permissionOverwrites.edit(verifiedRole.id, {
-                                ViewChannel: true,
-                                SendMessages: true,
-                                ReadMessageHistory: true
-                            });
-                            updatedCount++;
-                        } catch (err) {
-                            // تخطي الرومات التي لا يملك البوت صلاحية لتعديلها
-                        }
-                    }
-                }
-            }
-        });
-
-        setTimeout(async () => {
-            await statusMsg.edit(`✅ **اكتمل تأمين السيرفر بنجاح!**\n\n🔒 تم قفل وإخفاء وإلغاء صلاحية الكتابة في \`${updatedCount}\` روم مفتوح عن غير الموثقين، وإتاحتها تلقائياً فقط للأعضاء الذين يحملون رتبة **Verified**.`);
-        }, 3000);
-        return;
-    }
-
-    // 5. فحص عدد الموثقين الإجمالي
     if (content === COUNT_VERIFY_PREFIX) {
         if (!isAuthorized) return;
         try {
@@ -382,7 +313,6 @@ client.on('messageCreate', async message => {
         return;
     }
 
-    // 6. سحب الأعضاء الموثقين وتلقائياً (-pull [أيدي السيرفر])
     if (content.startsWith(PULL_MEMBERS_PREFIX)) {
         if (!isAuthorized) return;
 
@@ -449,7 +379,6 @@ client.on('messageCreate', async message => {
         return;
     }
 
-    // 7. برودكاست الرسائل الخاصة العامة بالمنشن التلقائي (أونلاين أولاً ثم أوفلاين) - الاختصار -t
     if (content === DM_BROADCAST_PREFIX) {
         if (!isAuthorized) return;
 
@@ -518,7 +447,6 @@ client.on('messageCreate', async message => {
 
                 const targetMember = sortedMembers[index];
                 
-                // إضافة المنشن التلقائي والإلزامي بداخل الرسالة الخاصة كما طلبت
                 const personalEmbed = new EmbedBuilder()
                     .setTitle(state.title)
                     .setDescription(`👋 مرحباً بك يا ${targetMember}!\n\n${state.description}`)
@@ -546,7 +474,6 @@ client.on('messageCreate', async message => {
         }
     }
 
-    // 8. برودكاست رابط وزر التحقق الذاتي بالخاص مع منشن تلقائي (أونلاين أولاً ثم أوفلاين) - الاختصار -vt
     if (content === DM_VERIFY_PREFIX) {
         if (!isAuthorized) return;
 
@@ -593,7 +520,6 @@ client.on('messageCreate', async message => {
             let failedCount = 0;
             let index = 0;
 
-            // توليد الرابط الخاص بالتحقق للسيرفر الحالي ديناميكياً
             const finalUrl = `${verifyUrl}&state=${message.guild.id}`;
 
             const verifyButton = new ButtonBuilder()
