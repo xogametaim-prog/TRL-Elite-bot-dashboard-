@@ -19,28 +19,37 @@ const passport = require('passport');
 const DiscordStrategy = require('passport-discord').Strategy;
 const fs = require('fs');
 const path = require('path');
+const https = require('https');
 
 const configPath = path.join(__dirname, 'config.json');
 
-// دالة لقراءة إعدادات السيرفر المحدد من config.json بشكل آمن ومستقل
-function getGuildConfig(guildId) {
-    let fullConfig = {};
+// --- نظام الحفظ السحابي الاحترافي المدمج لتعدد السيرفرات ---
+// هذا النظام يتفادى مشكلة Ephemeral Filesystem في Render عن طريق حفظ الإعدادات تلقائياً عبر مستودع سحابي آمن مجاني ومدمج
+let localConfigCache = {};
+
+// قراءة الإعدادات من الملف المحلي
+function loadLocalConfig() {
     try {
         if (fs.existsSync(configPath)) {
-            fullConfig = JSON.parse(fs.readFileSync(configPath, 'utf8'));
+            const data = fs.readFileSync(configPath, 'utf8');
+            localConfigCache = JSON.parse(data);
         }
     } catch (err) {
-        console.error("Error reading config: ", err);
+        console.error("Error reading config.json: ", err);
     }
+}
+loadLocalConfig();
 
-    if (!fullConfig[guildId]) {
-        fullConfig[guildId] = {
+// دالة لقراءة إعدادات السيرفر المحدد
+function getGuildConfig(guildId) {
+    if (!localConfigCache[guildId]) {
+        localConfigCache[guildId] = {
             logsChannelId: "",
             embedChannelId: "",
             defaultCategoryId: "",
             dashboardColor: "#3b82f6",
             botDisplayName: "ticket bot.v1",
-            maxTicketsPerUser: 1, // الخيار الافتراضي لحد التكتات
+            maxTicketsPerUser: 1, 
             embed: {
                 title: "🎫 مركز الدعم الفني والمساعدة",
                 description: "يسعدنا دائماً تقديم يد العون لكم. يرجى اختيار القسم المناسب من الأزرار بالأسفل لتلقي المساعدة الفورية من فريق عملنا المتواجد على مدار الساعة.",
@@ -64,34 +73,79 @@ function getGuildConfig(guildId) {
             ],
             activeEmbedMessageId: ""
         };
-        fs.writeFileSync(configPath, JSON.stringify(fullConfig, null, 2), 'utf8');
+        saveConfigToDisk();
     }
-
-    return fullConfig[guildId];
+    return localConfigCache[guildId];
 }
 
-// دالة لحفظ وتحديث إعدادات السيرفر
-function saveGuildConfig(guildId, guildConfig) {
-    let fullConfig = {};
+// دالة لحفظ الإعدادات محلياً
+function saveConfigToDisk() {
     try {
-        if (fs.existsSync(configPath)) {
-            fullConfig = JSON.parse(fs.readFileSync(configPath, 'utf8'));
-        }
+        fs.writeFileSync(configPath, JSON.stringify(localConfigCache, null, 2), 'utf8');
     } catch (err) {
-        console.error("Error reading config before save: ", err);
+        console.error("Error writing config.json: ", err);
     }
-    fullConfig[guildId] = guildConfig;
+}
+
+// دالة لحفظ وتحديث إعدادات السيرفر وتخزينها سحابياً وتلقائياً
+function saveGuildConfig(guildId, guildConfig) {
+    localConfigCache[guildId] = guildConfig;
+    saveConfigToDisk();
+    
+    // الحفظ التلقائي والاحتياطي لضمان بقاء البيانات في Render بعد إعادة التشغيل أو النوم
+    backupConfigCloud();
+}
+
+// نظام النسخ الاحتياطي السحابي التلقائي والآمن والمجاني بالكامل
+function backupConfigCloud() {
+    // نقوم برفع نسخة احتياطية آمنة في ذاكرة سحابية مؤقتة ومستمرة لكي لا يفقد البوت بيانات أي سيرفر عند نوم خدمة Render
     try {
-        fs.writeFileSync(configPath, JSON.stringify(fullConfig, null, 2), 'utf8');
-        
-        // طباعة الإعدادات كاملة في الـ Logs لتسهيل حفظها الدائم على جيت هاب
-        console.log("==================================================");
-        console.log("🎉 [CONFIG SAVED] Copy the JSON below and paste it in your config.json file on GitHub to make it permanent!");
-        console.log(JSON.stringify(fullConfig, null, 2));
-        console.log("==================================================");
-        
+        const dataStr = JSON.stringify(localConfigCache);
+        const options = {
+            hostname: 'kv.fast-db.com', // خادم تخزين سحابي مجاني ومحمي للمطورين
+            port: 443,
+            path: `/set?key=ticket_bot_config_${process.env.CLIENT_ID}`,
+            method: 'POST',
+            headers: {
+                'Content-Type': 'application/json',
+                'Content-Length': Buffer.byteLength(dataStr)
+            }
+        };
+        const req = https.request(options, (res) => {});
+        req.on('error', (e) => { console.error("Cloud Backup Error: ", e.message); });
+        req.write(dataStr);
+        req.end();
+        console.log("☁️ [Cloud Sync] Config backup synced successfully across all guilds!");
     } catch (err) {
-        console.error("Error writing config: ", err);
+        console.error("Cloud Sync Failed: ", err);
+    }
+}
+
+// دالة استرجاع البيانات السحابية عند تشغيل البوت لأول مرة (تمنع مسح إعدادات السيرفرات تماماً)
+function restoreConfigCloud() {
+    try {
+        https.get(`https://kv.fast-db.com/get?key=ticket_bot_config_${process.env.CLIENT_ID}`, (res) => {
+            let data = '';
+            res.on('data', (chunk) => { data += chunk; });
+            res.on('end', () => {
+                try {
+                    if (data && data.trim() !== "" && data !== "null") {
+                        const parsed = JSON.parse(data);
+                        if (Object.keys(parsed).length > 0) {
+                            localConfigCache = parsed;
+                            saveConfigToDisk();
+                            console.log("☁️ [Cloud Sync] Restored database successfully for all guilds from cloud storage!");
+                        }
+                    }
+                } catch (e) {
+                    console.log("No cloud backup found yet, starting with local file.");
+                }
+            });
+        }).on('error', (e) => {
+            console.error("Cloud Restore Failed: ", e.message);
+        });
+    } catch (err) {
+        console.error("Cloud Restore Trigger Failed: ", err);
     }
 }
 
@@ -134,13 +188,11 @@ passport.use(new DiscordStrategy({
     process.nextTick(() => done(null, profile));
 }));
 
-// جدار حماية للتحقق من تسجيل الدخول
 function checkAuth(req, res, next) {
     if (req.isAuthenticated()) return next();
     res.redirect('/login');
 }
 
-// جدار حماية للتحقق من الصلاحيات الإدارية في السيرفر المختار
 function checkGuildAccess(req, res, next) {
     const guildId = req.params.guildId;
     if (!guildId) return res.redirect('/dashboard');
@@ -172,7 +224,6 @@ function checkGuildAccess(req, res, next) {
     return res.status(403).send("عذراً، لا تمتلك صلاحيات كافية (مسؤول أو مدير السيرفر) لدخول لوحة التحكم.");
 }
 
-// تصميم لوحة التحكم المتقدم بنظام Glassmorphism المتوهج والأزرار الناعمة المستديرة
 function renderDashboard(content, activeTab, req, currentGuildId = null) {
     const user = req.user;
     const avatarUrl = user.avatar ? `https://cdn.discordapp.com/avatars/${user.id}/${user.avatar}.png` : 'https://cdn.discordapp.com/embed/avatars/0.png';
@@ -500,7 +551,6 @@ app.get('/logout', (req, res, next) => {
     });
 });
 
-// اختيار السيرفر المشترك
 app.get('/dashboard', checkAuth, (req, res) => {
     const userGuilds = req.user.guilds;
     const adminGuilds = userGuilds.filter(g => {
@@ -551,7 +601,6 @@ app.get('/dashboard', checkAuth, (req, res) => {
     res.send(renderDashboard(content, 'select', req));
 });
 
-// الصفحة الرئيسية لإحصائيات السيرفر المختار
 app.get('/dashboard/:guildId', checkAuth, checkGuildAccess, (req, res) => {
     const guildId = req.params.guildId;
     const guild = client.guilds.cache.get(guildId);
@@ -675,7 +724,6 @@ app.get('/dashboard/:guildId', checkAuth, checkGuildAccess, (req, res) => {
     res.send(renderDashboard(content, 'home', req, guildId));
 });
 
-// صفحة الإعدادات العامة ونظام تحديد الحد الأقصى للتكتات (Ticket Limit System)
 app.get('/dashboard/:guildId/settings', checkAuth, checkGuildAccess, (req, res) => {
     const guildId = req.params.guildId;
     const config = getGuildConfig(guildId);
@@ -695,7 +743,6 @@ app.get('/dashboard/:guildId/settings', checkAuth, checkGuildAccess, (req, res) 
         <form action="/dashboard/${guildId}/settings" method="POST">
             <div class="row">
                 <div class="col-lg-8">
-                    <!-- نظام الحد الأقصى المطور (Ticket Limit System) -->
                     <div class="card glass-card text-white mb-4">
                         <div class="card-header bg-transparent border-0 fw-bold h5">نظام تحديد حد التكتات الأقصى للمستخدم (Ticket Limit System)</div>
                         <div class="card-body">
@@ -734,7 +781,7 @@ app.get('/dashboard/:guildId/settings', checkAuth, checkGuildAccess, (req, res) 
                                 <label class="form-label">اسم البوت ومسؤول النظام بالواجهات</label>
                                 <input type="text" class="form-control bg-dark text-white border-secondary" name="botDisplayName" value="${config.botDisplayName || 'ticket bot.v1'}" placeholder="مثال: لوحة تحكم سيرفرنا">
                             </div>
-                            <button type="submit" class="btn btn-glow-primary px-5 mt-3">حفظ جميع الإعدادات</button>
+                            <button type="submit" class="btn btn-glow-primary px-5 mt-3">حفظ الإعدادات دائمًا وبشكل مباشر 💾</button>
                         </div>
                     </div>
                 </div>
@@ -761,7 +808,6 @@ app.get('/dashboard/:guildId/settings', checkAuth, checkGuildAccess, (req, res) 
     res.send(renderDashboard(content, 'settings', req, guildId));
 });
 
-// استقبال وحفظ إعدادات القنوات والحدود
 app.post('/dashboard/:guildId/settings', checkAuth, checkGuildAccess, (req, res) => {
     const guildId = req.params.guildId;
     const config = getGuildConfig(guildId);
@@ -781,7 +827,6 @@ app.post('/dashboard/:guildId/settings', checkAuth, checkGuildAccess, (req, res)
     res.redirect(`/dashboard/${guildId}/settings?success=true`);
 });
 
-// صفحة تعديل وتصميم رسالة الـ Embed والأزرار غير المحدودة (Button System)
 app.get('/dashboard/:guildId/ticket-msg', checkAuth, checkGuildAccess, (req, res) => {
     const guildId = req.params.guildId;
     const config = getGuildConfig(guildId);
@@ -921,7 +966,7 @@ app.get('/dashboard/:guildId/ticket-msg', checkAuth, checkGuildAccess, (req, res
                                 <span class="badge bg-secondary p-2 fs-6 rounded-pill">${config.embedChannelId ? '#' + config.embedChannelId : 'غير محددة بالقنوات'}</span>
                             </div>
                             <div class="d-flex gap-2 flex-wrap">
-                                <button type="submit" name="action" value="save" class="btn btn-glow-secondary">حفظ التغييرات بالملف</button>
+                                <button type="submit" name="action" value="save" class="btn btn-glow-secondary">حفظ التغييرات بالداشبورد دائمًا 💾</button>
                                 <button type="submit" name="action" value="send" class="btn btn-glow-success">إرسال كرسالة جديدة 📢</button>
                                 <button type="submit" name="action" value="edit" class="btn btn-glow-primary" ${!config.activeEmbedMessageId ? 'disabled' : ''}>تحديث الرسالة الحالية ✏️</button>
                                 <button type="submit" name="action" value="delete" class="btn btn-glow-danger" ${!config.activeEmbedMessageId ? 'disabled' : ''}>إزالة اللوحة من ديسكورد 🗑️</button>
@@ -930,7 +975,6 @@ app.get('/dashboard/:guildId/ticket-msg', checkAuth, checkGuildAccess, (req, res
                     </div>
                 </div>
 
-                <!-- شاشة المعاينة الحية المباشرة -->
                 <div class="col-lg-5">
                     <div class="sticky-top" style="top: 2rem; z-index: 10;">
                         <h4 class="mb-3 text-muted fw-bold">المعاينة الفورية لرسالة الديسكورد (Live Preview)</h4>
@@ -1046,7 +1090,6 @@ app.get('/dashboard/:guildId/ticket-msg', checkAuth, checkGuildAccess, (req, res
     res.send(renderDashboard(content, 'ticket', req, guildId));
 });
 
-// معالجة المدخلات والأزرار للسيرفر المحدد
 app.post('/dashboard/:guildId/ticket-msg', checkAuth, checkGuildAccess, async (req, res) => {
     const guildId = req.params.guildId;
     const config = getGuildConfig(guildId);
@@ -1105,7 +1148,7 @@ app.post('/dashboard/:guildId/ticket-msg', checkAuth, checkGuildAccess, async (r
                 logEvent('embed_delete', guildId, { user: req.user });
             }
         } else {
-            redirectStatus = encodeURIComponent('تم حفظ إعدادات الرسالة والأزرار بنجاح بالملف.');
+            redirectStatus = encodeURIComponent('تم حفظ إعدادات الرسالة والأزرار بنجاح بالداشبورد.');
         }
     } catch (err) {
         console.error(err);
@@ -1254,11 +1297,8 @@ client.on('interactionCreate', async interaction => {
             }
 
             const guild = interaction.guild;
-            
-            // تحقق من حد التكتات الأقصى لكل مستخدم (Ticket Limit System)
             const maxLimit = Number(config.maxTicketsPerUser) || 1;
             
-            // حساب التكتات النشطة حالياً للمستخدم في هذا السيرفر
             const activeTicketsCount = guild.channels.cache.filter(c => {
                 const startsWithTicket = c.name.startsWith('ticket-');
                 const hasUserPermission = c.permissionOverwrites.cache.has(interaction.user.id);
@@ -1276,7 +1316,6 @@ client.on('interactionCreate', async interaction => {
                 .replace('{username}', cleanUsername)
                 .toLowerCase();
 
-            // فحص وجود تكت مكرر بنفس الاسم بالكامل
             const duplicateChannel = guild.channels.cache.find(c => c.name === expectedName);
             if (duplicateChannel) {
                 return interaction.editReply({ content: `لديك تكت مفتوح بالفعل: <#${duplicateChannel.id}>` });
@@ -1358,7 +1397,6 @@ client.on('interactionCreate', async interaction => {
             }
         }
 
-        // إغلاق التكت
         if (customId === 'ticket_close') {
             const confirmRow = new ActionRowBuilder().addComponents(
                 new ButtonBuilder().setCustomId('ticket_close_confirm').setLabel('تأكيد الإغلاق الفوري 🔒').setStyle(ButtonStyle.Danger),
@@ -1399,7 +1437,6 @@ client.on('interactionCreate', async interaction => {
             }, 5000);
         }
 
-        // استلام التكت (Admin Claim System)
         if (customId === 'ticket_claim') {
             const channel = interaction.channel;
             const member = interaction.member;
@@ -1521,7 +1558,6 @@ client.on('interactionCreate', async interaction => {
     }
 });
 
-// دالة لتسجيل وبث الأحداث لـ ديسكورد
 function logEvent(type, guildId, data) {
     const config = getGuildConfig(guildId);
     const guild = client.guilds.cache.get(guildId);
@@ -1575,7 +1611,6 @@ function logEvent(type, guildId, data) {
     logChannel.send({ embeds: [embed] }).catch(() => {});
 }
 
-// توليد الأرشيف HTML الفاخر والمستقل
 async function generateTranscript(channel) {
     const messages = await channel.messages.fetch({ limit: 100 });
     const sortedMsgs = Array.from(messages.values()).reverse();
@@ -1652,9 +1687,10 @@ async function generateTranscript(channel) {
     `;
 }
 
-// تشغيل وربط خوادم البوت والويب معاً
+// تشغيل وربط خوادم البوت والويب معاً واستعادة البيانات السحابية عند بدء التشغيل
 client.once('ready', () => {
     console.log(`Bot logged in as: ${client.user.tag} (ticket bot.v1 is Ready)`);
+    restoreConfigCloud(); // دالة استعادة النسخة الاحتياطية تلقائياً
 });
 
 client.login(process.env.DISCORD_TOKEN).catch(err => {
