@@ -14,7 +14,8 @@ const {
     PermissionFlagsBits, 
     ModalBuilder, 
     TextInputBuilder, 
-    TextInputStyle 
+    TextInputStyle,
+    AttachmentBuilder
 } = require('discord.js');
 const express = require('express');
 const session = require('express-session');
@@ -28,16 +29,7 @@ const configPath = path.join(__dirname, 'config.json');
 
 // --- قاعدة البيانات السحابية والمحلية الذكية ---
 let database = {
-    guilds: {},      // إعدادات التذاكر والأزرار لكل سيرفر
-    users: {},       // نظام الـ XP، والعملات، والاشتراكات Premium للمستخدمين عالمياً
-    premiumKeys: [], // سجل تفعيلات الـ Premium
-    premiumSettings: {
-        botName: "ticket bot.v1",
-        botAvatar: "",
-        paymentMethod: "ProBot Transfer",
-        priceTier1: 20000000,
-        priceTier2: 30000000
-    }
+    guilds: {} // إعدادات البوت والداشبورد لكل سيرفر بشكل مستقل
 };
 
 function loadDatabase() {
@@ -45,8 +37,7 @@ function loadDatabase() {
         if (fs.existsSync(configPath)) {
             const data = fs.readFileSync(configPath, 'utf8');
             if (data.trim() !== "") {
-                const parsed = JSON.parse(data);
-                database = { ...database, ...parsed };
+                database = JSON.parse(data);
             }
         }
     } catch (err) {
@@ -63,7 +54,7 @@ function saveDatabase() {
     }
 }
 
-// دمج نظام النسخ الاحتياطي السحابي التلقائي لتجاوز مشكلة Ephemeral Filesystem في Render
+// مزامنة احتياطية سحابية لضمان عدم ضياع إعدادات السيرفرات في Render
 function syncDatabaseCloud() {
     try {
         const dataStr = JSON.stringify(database);
@@ -78,10 +69,9 @@ function syncDatabaseCloud() {
             }
         };
         const req = https.request(options, (res) => {});
-        req.on('error', (e) => { console.error("Cloud backup connection issue: ", e.message); });
+        req.on('error', (e) => { console.error("Cloud sync issue: ", e.message); });
         req.write(dataStr);
         req.end();
-        console.log("☁️ [Database Cloud Sync] Database backup uploaded safely!");
     } catch (err) {
         console.error("Cloud Sync Failed: ", err);
     }
@@ -95,15 +85,12 @@ function restoreDatabaseCloud() {
             res.on('end', () => {
                 try {
                     if (data && data.trim() !== "" && data !== "null") {
-                        const parsed = JSON.parse(data);
-                        if (Object.keys(parsed).length > 0) {
-                            database = parsed;
-                            saveDatabase();
-                            console.log("☁️ [Cloud Sync] Restored database successfully for all guilds from cloud storage!");
-                        }
+                        database = JSON.parse(data);
+                        saveDatabase();
+                        console.log("☁️ [Cloud Sync] Database recovered successfully!");
                     }
                 } catch (e) {
-                    console.log("No cloud backup found yet, starting with local file.");
+                    console.log("Using local configurations database.");
                 }
             });
         }).on('error', (e) => {
@@ -112,6 +99,67 @@ function restoreDatabaseCloud() {
     } catch (err) {
         console.error("Cloud Restore Trigger Failed: ", err);
     }
+}
+
+// جلب إعدادات سيرفر محدد أو تطبيق القوالب الافتراضية
+function getGuildConfig(guildId) {
+    if (!database.guilds[guildId]) {
+        database.guilds[guildId] = {
+            logsChannelId: "",
+            embedChannelId: "",
+            defaultCategoryId: "",
+            maxTicketsPerUser: 4, 
+            embed: {
+                title: "🎫 مركز المساعدة والدعم الفني",
+                description: "أهلاً بك في مركز الدعم. يرجى النقر على القسم المطلوب بالأسفل للتحدث مع فريق العمل الإداري.",
+                color: "#3b82f6",
+                author: "ticket bot.v1",
+                footer: "نحن هنا لخدمتك دائماً",
+                thumbnail: "",
+                image: "",
+                timestamp: true
+            },
+            buttons: [
+                {
+                    id: "support_general",
+                    label: "الدعم الفني",
+                    emoji: "🎫",
+                    style: "PRIMARY",
+                    ticketName: "ticket-{username}",
+                    mentionRole: "",
+                    categoryId: "",
+                    welcomeMessage: "أهلاً بك {user} في قسم الدعم الفني العام. يرجى كتابة تفاصيل مشكلتك هنا وسيرد عليك الإداري المختص."
+                }
+            ],
+            activeEmbedMessageId: "",
+            // الإضافات والميزات الجديدة المطلوبة:
+            autoReplies: [], // نظام الرد التلقائي
+            welcome: {
+                enabled: false,
+                channelId: "",
+                mentionUser: true,
+                message: "مرحباً بك {user} في سيرفرنا الرائع! نورت السيرفر ✨",
+                bgUrl: "https://i.imgur.com/4S7jFv1.png"
+            },
+            embedSender: {
+                title: "",
+                description: "",
+                color: "#3b82f6",
+                image: "",
+                thumbnail: "",
+                footer: "",
+                author: "",
+                targetChannelId: "",
+                lastMessageId: ""
+            },
+            autoRole: {
+                enabled: false,
+                roleId: ""
+            }
+        };
+        saveDatabase();
+    }
+    return database.guilds[guildId];
 }
 
 // تهيئة ديسكورد بوت
@@ -130,7 +178,7 @@ const app = express();
 const PORT = process.env.PORT || 3000;
 
 app.use(session({
-    secret: process.env.SESSION_SECRET || 'premium-glassmorphism-key-v1',
+    secret: process.env.SESSION_SECRET || 'probot-ticket-saas-key',
     resave: false,
     saveUninitialized: false
 }));
@@ -152,72 +200,6 @@ passport.use(new DiscordStrategy({
 }, (accessToken, refreshToken, profile, done) => {
     process.nextTick(() => done(null, profile));
 }));
-
-// جلب الإعدادات الخاصة بالسيرفر
-function getGuildConfig(guildId) {
-    if (!localConfigCache) {
-        localConfigCache = database.guilds || {};
-    }
-    if (!localConfigCache[guildId]) {
-        localConfigCache[guildId] = {
-            logsChannelId: "",
-            embedChannelId: "",
-            defaultCategoryId: "",
-            dashboardColor: "#3b82f6",
-            botDisplayName: "ticket bot.v1",
-            maxTicketsPerUser: 4, 
-            embed: {
-                title: "🎫 مركز الدعم الفني والمساعدة",
-                description: "يسعدنا دائماً تقديم يد العون لكم. يرجى اختيار القسم المناسب من الأزرار بالأسفل لتلقي المساعدة الفورية من فريق عملنا المتواجد على مدار الساعة.",
-                color: "#3b82f6",
-                author: "ticket bot.v1",
-                footer: "جميع الحقوق محفوظة للبوت ©",
-                thumbnail: "",
-                image: "",
-                timestamp: true
-            },
-            buttons: [
-                {
-                    label: "الدعم الفني والشكاوى",
-                    emoji: "🎫",
-                    style: "PRIMARY",
-                    ticketName: "ticket-{username}",
-                    mentionRole: "",
-                    categoryId: "",
-                    welcomeMessage: "أهلاً بك {user} في قسم الدعم والشكاوى! يرجى طرح مشكلتك أو استفسارك بالتفصيل وسيقوم أحد الإداريين بالرد عليك في أقرب وقت."
-                }
-            ],
-            activeEmbedMessageId: ""
-        };
-        database.guilds = localConfigCache;
-        saveDatabase();
-    }
-    return localConfigCache[guildId];
-}
-
-let localConfigCache = database.guilds || {};
-
-function saveGuildConfig(guildId, guildConfig) {
-    localConfigCache[guildId] = guildConfig;
-    database.guilds = localConfigCache;
-    saveDatabase();
-    syncDatabaseCloud();
-}
-
-function getUserData(userId) {
-    if (!database.users[userId]) {
-        database.users[userId] = {
-            xp: 0,
-            level: 1,
-            coins: 0,
-            premiumTier: 0,
-            premiumExpiry: null,
-            username: "عضو"
-        };
-        saveDatabase();
-    }
-    return database.users[userId];
-}
 
 // جدران الحماية للتحقق من الصلاحيات والوصول
 function checkAuth(req, res, next) {
@@ -247,25 +229,28 @@ function checkGuildAccess(req, res, next) {
                 <div style="background-color: #05070f; color: #fff; height: 100vh; display: flex; flex-direction: column; justify-content: center; align-items: center; font-family: 'Cairo', sans-serif;">
                     <h2 style="color: #3b82f6;">البوت غير مضاف للسيرفر!</h2>
                     <p style="color: #94a3b8; margin-bottom: 20px;">يرجى إضافة البوت للسيرفر أولاً لتتمكن من إدارته بالكامل.</p>
-                    <a href="https://discord.com/oauth2/authorize?client_id=${process.env.CLIENT_ID}&permissions=8&integration_type=0&scope=bot+applications.commands" style="background: linear-gradient(135deg, #3b82f6, #8b5cf6); color: white; padding: 12px 30px; text-decoration: none; border-radius: 50px; font-weight: bold; box-shadow: 0 0 15px rgba(59, 130, 246, 0.4);" target="_blank">دعوة البوت الآن 🚀</a>
+                    <a href="https://discord.com/oauth2/authorize?client_id=${process.env.CLIENT_ID}&permissions=8&integration_type=0&scope=bot+applications.commands" style="background: linear-gradient(135deg, #3b82f6, #8b5cf6); color: white; padding: 12px 30px; text-decoration: none; border-radius: 50px; font-weight: bold; box-shadow: 0 4px 15px rgba(59, 130, 246, 0.4);" target="_blank">دعوة البوت الآن 🚀</a>
                 </div>
             `);
         }
         return next();
     }
-    return res.status(403).send("عذراً، لا تمتلك الصلاحيات الكافية (Administrator أو Manage Server) لإدارة هذا السيرفر.");
+    return res.status(403).send("عذراً، لا تمتلك صلاحيات كافية (مسؤول أو مدير السيرفر) لدخول لوحة التحكم.");
 }
 
-// تصميم لوحة التحكم المتقدمة SaaS Glassmorphism UI
+// تصميم لوحة التحكم المتقدم بنظام Glassmorphism المتوهج
 function renderDashboard(content, activeTab, req, currentGuildId = null) {
     const user = req.user;
     const avatarUrl = user.avatar ? `https://cdn.discordapp.com/avatars/${user.id}/${user.avatar}.png` : 'https://cdn.discordapp.com/embed/avatars/0.png';
-    const config = currentGuildId ? getGuildConfig(currentGuildId) : {};
-    const botName = database.premiumSettings.botName || "ticket bot.v1";
+    const botName = "ticket bot.v1";
     
     const homeLink = currentGuildId ? `/dashboard/${currentGuildId}` : '/dashboard';
     const ticketLink = currentGuildId ? `/dashboard/${currentGuildId}/ticket-msg` : '#';
     const settingsLink = currentGuildId ? `/dashboard/${currentGuildId}/settings` : '#';
+    const welcomeLink = currentGuildId ? `/dashboard/${currentGuildId}/welcome` : '#';
+    const autoreplyLink = currentGuildId ? `/dashboard/${currentGuildId}/autoreply` : '#';
+    const embedsenderLink = currentGuildId ? `/dashboard/${currentGuildId}/embedsender` : '#';
+    const autoroleLink = currentGuildId ? `/dashboard/${currentGuildId}/autorole` : '#';
 
     return `
     <!DOCTYPE html>
@@ -385,6 +370,20 @@ function renderDashboard(content, activeTab, req, currentGuildId = null) {
                 transform: translateY(-2px);
                 color: #fff;
             }
+            .btn-glow-danger {
+                background: linear-gradient(135deg, #ef4444, #dc2626);
+                border: none;
+                color: #fff;
+                font-weight: 600;
+                border-radius: 50px;
+                padding: 10px 24px;
+                transition: all 0.3s ease;
+            }
+            .btn-glow-danger:hover {
+                transform: translateY(-2px);
+                box-shadow: 0 0 20px rgba(239, 68, 68, 0.4);
+                color: #fff;
+            }
             .nav-link {
                 color: var(--text-muted);
                 padding: 0.8rem 1.5rem;
@@ -417,23 +416,6 @@ function renderDashboard(content, activeTab, req, currentGuildId = null) {
             .discord-preview-desc { line-height: 1.5; white-space: pre-wrap; }
             .discord-preview-footer { font-size: 0.75rem; color: #949ba4; margin-top: 10px; }
             .discord-preview-author { font-size: 0.9rem; font-weight: 700; color: #fff; margin-bottom: 6px; }
-            .discord-btn {
-                padding: 8px 18px;
-                border-radius: 50px;
-                font-size: 0.85rem;
-                font-weight: 600;
-                border: none;
-                color: white;
-                display: inline-flex;
-                align-items: center;
-                gap: 8px;
-                margin: 4px;
-                box-shadow: 0 4px 10px rgba(0,0,0,0.2);
-            }
-            .discord-btn-primary { background-color: #5865f2; }
-            .discord-btn-secondary { background-color: #4f545c; }
-            .discord-btn-success { background-color: #248046; }
-            .discord-btn-danger { background-color: #da373c; }
         </style>
     </head>
     <body>
@@ -470,11 +452,17 @@ function renderDashboard(content, activeTab, req, currentGuildId = null) {
                 <a href="${settingsLink}" class="nav-link ${activeTab === 'settings' ? 'active' : ''} ${!currentGuildId ? 'disabled' : ''}">
                     <i class="bi bi-sliders"></i> قنوات وإعدادات التكت
                 </a>
-                <a href="/dashboard/ranking" class="nav-link ${activeTab === 'ranking' ? 'active' : ''}">
-                    <i class="bi bi-trophy"></i> جدول ترتيب الخبرة (XP)
+                <a href="${autoreplyLink}" class="nav-link ${activeTab === 'autoreply' ? 'active' : ''} ${!currentGuildId ? 'disabled' : ''}">
+                    <i class="bi bi-chat-quote"></i> الرد التلقائي (Auto Reply)
                 </a>
-                <a href="/dashboard/premium" class="nav-link ${activeTab === 'premium' ? 'active' : ''}">
-                    <i class="bi bi-star"></i> صفحة باقات Premium
+                <a href="${welcomeLink}" class="nav-link ${activeTab === 'welcome' ? 'active' : ''} ${!currentGuildId ? 'disabled' : ''}">
+                    <i class="bi bi-megaphone"></i> نظام الترحيب والبطاقات
+                </a>
+                <a href="${embedsenderLink}" class="nav-link ${activeTab === 'embedsender' ? 'active' : ''} ${!currentGuildId ? 'disabled' : ''}">
+                    <i class="bi bi-envelope"></i> مرسل رسائل Embed
+                </a>
+                <a href="${autoroleLink}" class="nav-link ${activeTab === 'autorole' ? 'active' : ''} ${!currentGuildId ? 'disabled' : ''}">
+                    <i class="bi bi-person-badge"></i> رتب الدخول (Auto Role)
                 </a>
                 
                 <hr class="mx-3 border-secondary">
@@ -578,9 +566,7 @@ app.get('/', (req, res) => {
     `);
 });
 
-// تعريف مسار تسجيل الدخول OAuth2 بشكل سليم
 app.get('/login', passport.authenticate('discord'));
-
 app.get('/callback', passport.authenticate('discord', { failureRedirect: '/' }), (req, res) => {
     res.redirect('/dashboard');
 });
@@ -592,7 +578,6 @@ app.get('/logout', (req, res, next) => {
     });
 });
 
-// اختيار السيرفر المشترك
 app.get('/dashboard', checkAuth, (req, res) => {
     const userGuilds = req.user.guilds;
     const adminGuilds = userGuilds.filter(g => {
@@ -667,7 +652,7 @@ app.get('/dashboard/:guildId', checkAuth, checkGuildAccess, (req, res) => {
                     <div class="card-body">
                         <div class="row align-items-center">
                             <div class="col">
-                                <div class="text-xs text-primary text-uppercase mb-1 fw-bold">حالة البوت الأساسي</div>
+                                <div class="text-xs text-primary text-uppercase mb-1 fw-bold">حالة البوت</div>
                                 <div class="h5 mb-0 fw-bold">متصل بالخدمة 🟢</div>
                             </div>
                             <div class="col-auto"><i class="bi bi-robot text-primary" style="font-size: 2rem;"></i></div>
@@ -718,47 +703,6 @@ app.get('/dashboard/:guildId', checkAuth, checkGuildAccess, (req, res) => {
                 </div>
             </div>
         </div>
-
-        <div class="row mt-4">
-            <div class="col-lg-6">
-                <div class="card glass-card text-white">
-                    <div class="card-header border-0 bg-transparent fw-bold h5">أداء واستقرار النظام</div>
-                    <div class="card-body">
-                        <table class="table table-dark table-hover table-borderless m-0 bg-transparent text-white">
-                            <tbody>
-                                <tr>
-                                    <td>وقت التشغيل المتواصل (Uptime)</td>
-                                    <td class="text-end text-info">${Math.floor(client.uptime / 60000)} دقيقة</td>
-                                </tr>
-                                <tr>
-                                    <td>استهلاك ذاكرة الخادم الأساسية</td>
-                                    <td class="text-end text-info">${(process.memoryUsage().heapUsed / 1024 / 1024).toFixed(2)} MB</td>
-                                </tr>
-                                <tr>
-                                    <td>مستند الدعم الرسمي للبوت</td>
-                                    <td class="text-end"><a href="https://discord.gg/TvFaRGadkc" target="_blank" class="text-info text-decoration-none">انقر للانضمام</a></td>
-                                </tr>
-                            </tbody>
-                        </table>
-                    </div>
-                </div>
-            </div>
-            <div class="col-lg-6">
-                <div class="card glass-card text-white">
-                    <div class="card-header border-0 bg-transparent fw-bold h5">الدليل السريع وميزات ديسكورد</div>
-                    <div class="card-body">
-                        <p>نظام التذاكر بالكامل مجاني وذكي للغاية:</p>
-                        <ul>
-                            <li>يمنع الأعضاء تلقائياً من تجاوز الحد الأقصى للتذاكر المسموح بفتحها.</li>
-                            <li>يدعم أرشيف الرسائل بصيغة HTML منسقة ومحمية ومباشرة.</li>
-                        </ul>
-                        <div class="d-grid mt-4">
-                            <a href="/dashboard/${guildId}/ticket-msg" class="btn btn-glow-primary">تصميم رسالة التكت الأولى الآن 🎨</a>
-                        </div>
-                    </div>
-                </div>
-            </div>
-        </div>
     </div>
     `;
     res.send(renderDashboard(content, 'home', req, guildId));
@@ -800,6 +744,7 @@ app.get('/dashboard/:guildId/settings', checkAuth, checkGuildAccess, (req, res) 
         <form action="/dashboard/${guildId}/settings" method="POST">
             <div class="row">
                 <div class="col-lg-8">
+                    <!-- نظام الحد الأقصى للتكتات -->
                     <div class="card glass-card text-white mb-4">
                         <div class="card-header bg-transparent border-0 fw-bold h5">الحد الأقصى للتذاكر للمستخدم الواحد (Max Tickets Per User)</div>
                         <div class="card-body">
@@ -817,29 +762,6 @@ app.get('/dashboard/:guildId/settings', checkAuth, checkGuildAccess, (req, res) 
                             <div class="mb-3 d-none" id="customLimitWrapper">
                                 <label class="form-label">ادخل الرقم المخصص</label>
                                 <input type="number" class="form-control bg-dark text-white border-secondary" name="customMaxTickets" value="${![1,2,3,4,5].includes(Number(config.maxTicketsPerUser)) ? config.maxTicketsPerUser : '4'}" min="1">
-                            </div>
-                        </div>
-                    </div>
-
-                    <div class="card glass-card text-white mb-4">
-                        <div class="card-header bg-transparent border-0 fw-bold h5">إعدادات الاقتصاد ونظام الـ XP</div>
-                        <div class="card-body">
-                            <div class="row">
-                                <div class="col-md-6 mb-3">
-                                    <label class="form-label">كمية الـ XP الممنوحة لكل رسالة</label>
-                                    <input type="number" class="form-control bg-dark text-white border-secondary" name="xpPerMessage" value="${config.xpPerMessage || 15}">
-                                </div>
-                                <div class="col-md-6 mb-3">
-                                    <label class="form-label">اسم عملة السيرفر الخاصة بالبوت</label>
-                                    <input type="text" class="form-control bg-dark text-white border-secondary" name="currencyName" value="${config.currencyName || 'Coins'}">
-                                </div>
-                                <div class="col-12 mb-3">
-                                    <label class="form-label">قيمة التحويل من Credits التابع لـ Probot إلى العملة الخاصة</label>
-                                    <div class="input-group">
-                                        <input type="number" class="form-control bg-dark text-white border-secondary" name="creditsToCoinRatio" value="${config.creditsToCoinRatio || 1000}">
-                                        <span class="input-group-text bg-secondary text-white">Credits = 1 Coin</span>
-                                    </div>
-                                </div>
                             </div>
                         </div>
                     </div>
@@ -903,15 +825,12 @@ app.post('/dashboard/:guildId/settings', checkAuth, checkGuildAccess, (req, res)
     config.logsChannelId = req.body.logsChannelId;
     config.embedChannelId = req.body.embedChannelId;
     config.defaultCategoryId = req.body.defaultCategoryId;
-    config.xpPerMessage = Number(req.body.xpPerMessage) || 15;
-    config.currencyName = req.body.currencyName || 'Coins';
-    config.creditsToCoinRatio = Number(req.body.creditsToCoinRatio) || 1000;
     
     saveGuildConfig(guildId, config);
     res.redirect(`/dashboard/${guildId}/settings?success=true`);
 });
 
-// صفحة تعديل وتصميم رسالة التكت والتحكم بالأزرار غير المحدودة
+// صفحة تعديل وتصميم رسالة التكت والتحكم بالأزرار
 app.get('/dashboard/:guildId/ticket-msg', checkAuth, checkGuildAccess, (req, res) => {
     const guildId = req.params.guildId;
     const config = getGuildConfig(guildId);
@@ -994,7 +913,7 @@ app.get('/dashboard/:guildId/ticket-msg', checkAuth, checkGuildAccess, (req, res
     const content = `
     <div class="container-fluid">
         <h2 class="fw-bold mb-4">تصميم لوحة رسائل التكت وفئات الأزرار المتعددة</h2>
-        ${req.query.success === 'true' ? `<div class="alert alert-success">تم حفظ الإعدادات وإرسال التحديثات لـ ديسكورد بنجاح!</div>` : ''}
+        ${req.query.success === 'true' ? `<div class="alert alert-success">تم حفظ الإعدادات بنجاح!</div>` : ''}
 
         <form id="ticketForm" method="POST" action="/dashboard/${guildId}/ticket-msg">
             <div class="row">
@@ -1182,342 +1101,497 @@ app.post('/dashboard/:guildId/ticket-msg', checkAuth, checkGuildAccess, async (r
     res.redirect(`/dashboard/${guildId}/ticket-msg?success=true&statusMsg=${encodeURIComponent(status)}`);
 });
 
-// صفحة ترتيب نقاط الخبرة XP Leaderboard
-app.get('/dashboard/ranking', checkAuth, (req, res) => {
-    const sortedUsers = Object.entries(database.users)
-        .map(([id, u]) => ({ id, ...u }))
-        .sort((a, b) => b.xp - a.xp)
-        .slice(0, 15);
-
-    let rankingRows = '';
-    sortedUsers.forEach((u, index) => {
-        rankingRows += `
+// --- 1. نظام الرد التلقائي (Automatic Reply Dashboard) ---
+app.get('/dashboard/:guildId/autoreply', checkAuth, checkGuildAccess, (req, res) => {
+    const guildId = req.params.guildId;
+    const config = getGuildConfig(guildId);
+    
+    let rowsHtml = '';
+    config.autoReplies.forEach((item, index) => {
+        rowsHtml += `
         <tr>
-            <td class="fw-bold text-info fs-5">#${index + 1}</td>
+            <td class="fw-bold text-info">${item.keyword}</td>
+            <td>${item.reply}</td>
             <td>
-                <span class="fw-bold">${u.username}</span>
-                ${u.premiumExpiry ? '<span class="badge bg-warning text-dark ms-2">Premium ⭐</span>' : ''}
+                <span class="badge ${item.enabled ? 'bg-success' : 'bg-secondary'}">
+                    ${item.enabled ? 'نشط' : 'معطل'}
+                </span>
             </td>
-            <td><span class="badge bg-secondary">Level ${u.level}</span></td>
-            <td class="text-success fw-bold">${u.xp} XP</td>
-            <td class="text-warning fw-bold">${u.coins} Coins</td>
+            <td>
+                <form action="/dashboard/${guildId}/autoreply/toggle/${index}" method="POST" class="d-inline">
+                    <button type="submit" class="btn btn-sm btn-outline-warning rounded-pill">تغيير الحالة 🔄</button>
+                </form>
+                <form action="/dashboard/${guildId}/autoreply/delete/${index}" method="POST" class="d-inline">
+                    <button type="submit" class="btn btn-sm btn-glow-danger rounded-pill ms-1">حذف 🗑️</button>
+                </form>
+            </td>
         </tr>
         `;
     });
 
     const content = `
     <div class="container-fluid">
-        <h2 class="fw-bold mb-4">🏆 جدول ترتيب نقاط الخبرة والعملات (XP & Coins Leaderboard)</h2>
-        <div class="card glass-card text-white border-0">
-            <div class="card-body">
-                <table class="table table-dark table-hover table-borderless m-0 bg-transparent text-white align-middle">
-                    <thead>
-                        <tr class="border-bottom border-secondary text-muted">
-                            <th>الترتيب</th>
-                            <th>العضو</th>
-                            <th>المستوى (Level)</th>
-                            <th>نقاط الخبرة (XP)</th>
-                            <th>الرصيد بالعملة</th>
-                        </tr>
-                    </thead>
-                    <tbody>
-                        ${rankingRows || '<tr><td colspan="5" class="text-center text-muted py-5">لا توجد سجلات خبرة نشطة حالياً.</td></tr>'}
-                    </tbody>
-                </table>
-            </div>
-        </div>
-    </div>
-    `;
-    res.send(renderDashboard(content, 'ranking', req));
-});
-
-// صفحة الـ Premium والباقات وتعديل بيانات البوت
-app.get('/dashboard/premium', checkAuth, (req, res) => {
-    const isOwner = req.user.id === "1459567453251309639" || req.user.id === "1457923390143856642";
-    const pSettings = database.premiumSettings;
-
-    const content = `
-    <div class="container-fluid">
-        <h2 class="fw-bold mb-1">⭐ بوابة اشتراكات Premium الاحترافية</h2>
-        <p class="text-muted mb-4">احصل على أعلى ميزات الحماية والتخصيص الفاخرة بشكل تلقائي.</p>
-
+        <h2 class="fw-bold mb-4">🤖 نظام الردود التلقائية الذكي (Auto Reply)</h2>
+        ${req.query.success === 'true' ? `<div class="alert alert-success">تم حفظ الإجراء بنجاح!</div>` : ''}
+        
         <div class="row">
-            <div class="col-md-6 mb-4">
-                <div class="card glass-card text-white h-100 border-start border-primary border-4 p-3">
-                    <div class="card-body d-flex flex-column justify-content-between">
-                        <div>
-                            <h3 class="fw-bold text-primary">باقة Premium الأولى ⭐</h3>
-                            <h4 class="my-3 text-info fw-bold">${pSettings.priceTier1.toLocaleString()} Credits</h4>
-                            <hr class="border-secondary">
-                            <ul class="text-muted lh-lg">
-                                <li>إخفاء حقوق البوت No Branding بالكامل.</li>
-                                <li>سرعة تشغيل وأولوية بالمعالجة فائقة السرعة.</li>
-                                <li>دعم فني مخصص على مدار الساعة.</li>
-                            </ul>
-                        </div>
-                        <a href="https://discord.gg/TvFaRGadkc" class="btn btn-glow-primary w-100 mt-4" target="_blank">شراء وتفعيل الاشتراك تلقائياً 🚀</a>
-                    </div>
-                </div>
-            </div>
-
-            <div class="col-md-6 mb-4">
-                <div class="card glass-card text-white h-100 border-start border-warning border-4 p-3">
-                    <div class="card-body d-flex flex-column justify-content-between">
-                        <div>
-                            <h3 class="fw-bold text-warning">باقة Premium الثانية ⭐⭐</h3>
-                            <h4 class="my-3 text-info fw-bold">${pSettings.priceTier2.toLocaleString()} Credits</h4>
-                            <hr class="border-secondary">
-                            <ul class="text-muted lh-lg">
-                                <li>جميع ميزات الباقة الأولى بشكل دائم.</li>
-                                <li>إمكانية إنشاء عدد غير محدود من أنواع وأقسام التكتات.</li>
-                                <li>تخصيص كامل لاسم البوت وصورته الخاصة من لوحة التحكم.</li>
-                                <li>استباقية الحصول على كافة التحديثات والميزات المستقبلية.</li>
-                            </ul>
-                        </div>
-                        <a href="https://discord.gg/TvFaRGadkc" class="btn btn-glow-success w-100 mt-4" target="_blank">شراء وتفعيل الاشتراك تلقائياً 🚀</a>
-                    </div>
-                </div>
-            </div>
-        </div>
-
-        ${isOwner ? `
-        <div class="row mt-4">
-            <div class="col-12">
-                <div class="card glass-card text-white">
-                    <div class="card-header bg-transparent border-0 fw-bold h5">🛠️ إعدادات التحكم بالباقات (للمطورين والمالك فقط)</div>
+            <div class="col-lg-5 mb-4">
+                <div class="card glass-card text-white border-0">
+                    <div class="card-header bg-transparent border-0 fw-bold h5">إضافة رد تلقائي جديد</div>
                     <div class="card-body">
-                        <form action="/dashboard/premium/admin-save" method="POST">
-                            <div class="row">
-                                <div class="col-md-6 mb-3">
-                                    <label class="form-label">اسم البوت (Premium)</label>
-                                    <input type="text" class="form-control bg-dark text-white border-secondary" name="botName" value="${pSettings.botName}">
-                                </div>
-                                <div class="col-md-6 mb-3">
-                                    <label class="form-label">سعر الباقة الأولى (Credits)</label>
-                                    <input type="number" class="form-control bg-dark text-white border-secondary" name="priceTier1" value="${pSettings.priceTier1}">
-                                </div>
-                                <div class="col-md-6 mb-3">
-                                    <label class="form-label">سعر الباقة الثانية (Credits)</label>
-                                    <input type="number" class="form-control bg-dark text-white border-secondary" name="priceTier2" value="${pSettings.priceTier2}">
-                                </div>
-                                <div class="col-md-6 mb-3">
-                                    <label class="form-label">وسيلة التحويل المعتمدة</label>
-                                    <input type="text" class="form-control bg-dark text-white border-secondary" name="paymentMethod" value="${pSettings.paymentMethod}">
-                                </div>
+                        <form action="/dashboard/${guildId}/autoreply/add" method="POST">
+                            <div class="mb-3">
+                                <label class="form-label">الكلمة أو الجملة المفتاحية (البحث)</label>
+                                <input type="text" class="form-control bg-dark text-white border-secondary" name="keyword" placeholder="مثال: السلام عليكم" required>
                             </div>
-                            <button type="submit" class="btn btn-glow-primary mt-3">حفظ إعدادات الباقات السحابية</button>
+                            <div class="mb-3">
+                                <label class="form-label">الرد المقابل من البوت</label>
+                                <textarea class="form-control bg-dark text-white border-secondary" name="reply" placeholder="مثال: وعليكم السلام ورحمة الله وبركاته" rows="3" required></textarea>
+                            </div>
+                            <button type="submit" class="btn btn-glow-primary w-100">إضافة الرد التلقائي 🚀</button>
                         </form>
                     </div>
                 </div>
             </div>
+            
+            <div class="col-lg-7">
+                <div class="card glass-card text-white border-0">
+                    <div class="card-header bg-transparent border-0 fw-bold h5">قائمة الردود المضافة</div>
+                    <div class="card-body p-0">
+                        <table class="table table-dark table-hover table-borderless m-0 bg-transparent text-white align-middle">
+                            <thead>
+                                <tr class="border-bottom border-secondary text-muted">
+                                    <th>الجملة المفتاحية</th>
+                                    <th>رد البوت</th>
+                                    <th>الحالة</th>
+                                    <th>الإجراءات</th>
+                                </tr>
+                            </thead>
+                            <tbody>
+                                ${rowsHtml || '<tr><td colspan="4" class="text-center text-muted py-5">لا توجد ردود تلقائية مضافة حالياً.</td></tr>'}
+                            </tbody>
+                        </table>
+                    </div>
+                </div>
+            </div>
         </div>
-        ` : ''}
     </div>
     `;
-    res.send(renderDashboard(content, 'premium', req));
+    res.send(renderDashboard(content, 'autoreply', req, guildId));
 });
 
-app.post('/dashboard/premium/admin-save', checkAuth, (req, res) => {
-    const isOwner = req.user.id === "1459567453251309639" || req.user.id === "1457923390143856642";
-    if (!isOwner) return res.status(403).send("غير مصرح لك بالدخول.");
-
-    database.premiumSettings.botName = req.body.botName;
-    database.premiumSettings.priceTier1 = Number(req.body.priceTier1) || 20000000;
-    database.premiumSettings.priceTier2 = Number(req.body.priceTier2) || 30000000;
-    database.premiumSettings.paymentMethod = req.body.paymentMethod;
-
-    saveDatabase();
-    syncDatabaseCloud();
-    res.redirect('/dashboard/premium');
+app.post('/dashboard/:guildId/autoreply/add', checkAuth, checkGuildAccess, (req, res) => {
+    const guildId = req.params.guildId;
+    const config = getGuildConfig(guildId);
+    
+    config.autoReplies.push({
+        keyword: req.body.keyword,
+        reply: req.body.reply,
+        enabled: true
+    });
+    
+    saveGuildConfig(guildId, config);
+    res.redirect(`/dashboard/${guildId}/autoreply?success=true`);
 });
 
-// ==================== دوال التحكم والاتصال مع ديسكورد ====================
-
-async function sendTicketEmbed(guildId) {
+app.post('/dashboard/:guildId/autoreply/toggle/:index', checkAuth, checkGuildAccess, (req, res) => {
+    const guildId = req.params.guildId;
     const config = getGuildConfig(guildId);
-    const channel = client.channels.cache.get(config.embedChannelId);
-    if (!channel) throw new Error("قناة الإرسال غير متوفرة أو لم يتم تحديدها بالإعدادات العامة.");
+    const index = req.params.index;
+    
+    if (config.autoReplies[index]) {
+        config.autoReplies[index].enabled = !config.autoReplies[index].enabled;
+        saveGuildConfig(guildId, config);
+    }
+    res.redirect(`/dashboard/${guildId}/autoreply?success=true`);
+});
 
-    const embedData = config.embed;
-    const embed = new EmbedBuilder()
-        .setTitle(embedData.title || "لوحة التكت")
-        .setDescription(embedData.description || "انقر بالأسفل للتواصل")
-        .setColor(embedData.color || "#3b82f6");
+app.post('/dashboard/:guildId/autoreply/delete/:index', checkAuth, checkGuildAccess, (req, res) => {
+    const guildId = req.params.guildId;
+    const config = getGuildConfig(guildId);
+    const index = req.params.index;
+    
+    if (config.autoReplies[index]) {
+        config.autoReplies.splice(index, 1);
+        saveGuildConfig(guildId, config);
+    }
+    res.redirect(`/dashboard/${guildId}/autoreply?success=true`);
+});
 
-    if (embedData.author) embed.setAuthor({ name: embedData.author });
-    if (embedData.footer) embed.setFooter({ text: embedData.footer });
-    if (embedData.thumbnail) embed.setThumbnail(embedData.thumbnail);
-    if (embedData.image) embed.setImage(embedData.image);
-    embed.setTimestamp();
+// --- 2. نظام الترحيب والبطاقات (Welcome System Dashboard) ---
+app.get('/dashboard/:guildId/welcome', checkAuth, checkGuildAccess, (req, res) => {
+    const guildId = req.params.guildId;
+    const config = getGuildConfig(guildId);
+    const guild = client.guilds.cache.get(guildId);
 
-    const rows = [];
-    let currentRow = new ActionRowBuilder();
-
-    config.buttons.forEach((btn, idx) => {
-        let style = ButtonStyle.Primary;
-        if (btn.style === 'SECONDARY') style = ButtonStyle.Secondary;
-        if (btn.style === 'SUCCESS') style = ButtonStyle.Success;
-        if (btn.style === 'DANGER') style = ButtonStyle.Danger;
-
-        const button = new ButtonBuilder()
-            .setCustomId(`open_ticket_${idx}`)
-            .setLabel(btn.label)
-            .setStyle(style);
-
-        if (btn.emoji) button.setEmoji(btn.emoji);
-        currentRow.addComponents(button);
-
-        if (currentRow.components.length === 5) {
-            rows.push(currentRow);
-            currentRow = new ActionRowBuilder();
-        }
+    const channels = guild.channels.cache.filter(c => c.type === ChannelType.GuildText);
+    let channelsHtml = `<option value="">-- اختر روم الترحيب --</option>`;
+    channels.forEach(ch => {
+        channelsHtml += `<option value="${ch.id}" ${config.welcome.channelId === ch.id ? 'selected' : ''}>#${ch.name}</option>`;
     });
 
-    if (currentRow.components.length > 0) {
-        rows.push(currentRow);
-    }
-
-    const msg = await channel.send({ embeds: [embed], components: rows });
-    config.activeEmbedMessageId = msg.id;
-    saveGuildConfig(guildId, config);
-}
-
-async function editTicketEmbed(guildId) {
-    const config = getGuildConfig(guildId);
-    const channel = client.channels.cache.get(config.embedChannelId);
-    if (!channel) throw new Error("لم يتم العثور على القناة المحددة للرسالة.");
-    const msg = await channel.messages.fetch(config.activeEmbedMessageId);
-    if (!msg) throw new Error("لم يتم العثور على الرسالة لتحديثها بالديسكورد.");
-
-    const embedData = config.embed;
-    const embed = new EmbedBuilder()
-        .setTitle(embedData.title || "تكت جديد")
-        .setDescription(embedData.description || "انقر بالأسفل للتواصل")
-        .setColor(embedData.color || "#3b82f6");
-
-    if (embedData.author) embed.setAuthor({ name: embedData.author });
-    if (embedData.footer) embed.setFooter({ text: embedData.footer });
-    if (embedData.thumbnail) embed.setThumbnail(embedData.thumbnail);
-    if (embedData.image) embed.setImage(embedData.image);
-    embed.setTimestamp();
-
-    const rows = [];
-    let currentRow = new ActionRowBuilder();
-
-    config.buttons.forEach((btn, idx) => {
-        let style = ButtonStyle.Primary;
-        if (btn.style === 'SECONDARY') style = ButtonStyle.Secondary;
-        if (btn.style === 'SUCCESS') style = ButtonStyle.Success;
-        if (btn.style === 'DANGER') style = ButtonStyle.Danger;
-
-        const button = new ButtonBuilder()
-            .setCustomId(`open_ticket_${idx}`)
-            .setLabel(btn.label)
-            .setStyle(style);
-
-        if (btn.emoji) button.setEmoji(btn.emoji);
-        currentRow.addComponents(button);
-
-        if (currentRow.components.length === 5) {
-            rows.push(currentRow);
-            currentRow = new ActionRowBuilder();
-        }
-    });
-
-    if (currentRow.components.length > 0) {
-        rows.push(currentRow);
-    }
-
-    await msg.edit({ embeds: [embed], components: rows });
-}
-
-async function deleteTicketEmbed(guildId) {
-    const config = getGuildConfig(guildId);
-    const channel = client.channels.cache.get(config.embedChannelId);
-    if (channel && config.activeEmbedMessageId) {
-        try {
-            const msg = await channel.messages.fetch(config.activeEmbedMessageId);
-            if (msg) await msg.delete();
-        } catch (e) {
-            console.error("Embed delete error: ", e.message);
-        }
-    }
-    config.activeEmbedMessageId = "";
-    saveGuildConfig(guildId, config);
-}
-
-function saveGuildConfig(guildId, config) {
-    database.guilds[guildId] = config;
-    saveDatabase();
-    syncDatabaseCloud();
-}
-
-// ==================== نظام التفاعل والتحقق من اشتراكات Premium تلقائياً ====================
-
-client.on('messageCreate', async message => {
-    if (message.author.bot) {
-        if (message.guildId === "1517507260023308400") {
-            const content = message.content;
-            
-            if (content.includes("قام بتحويل") && (content.includes("1459567453251309639") || content.includes("1457923390143856642"))) {
-                const regExp = /قام بتحويل\s*"\s*\$?([\d,]+)\s*"\s*لـ\s*<@!?(\d+)>/;
-                const matches = content.match(regExp);
-                
-                if (matches) {
-                    const price = parseInt(matches[1].replace(/,/g, ''));
-                    const targetId = matches[2];
-                    
-                    const payerMember = message.mentions.members.first();
-                    if (payerMember && (targetId === "1459567453251309639" || targetId === "1457923390143856642")) {
-                        const userId = payerMember.id;
-                        const userData = getUserData(userId);
-                        
-                        let tierGranted = 0;
-                        if (price >= database.premiumSettings.priceTier2) {
-                            tierGranted = 2;
-                        } else if (price >= database.premiumSettings.priceTier1) {
-                            tierGranted = 1;
-                        }
-
-                        if (tierGranted > 0) {
-                            userData.premiumTier = tierGranted;
-                            const expiry = new Date();
-                            expiry.setMonth(expiry.getMonth() + 1);
-                            userData.premiumExpiry = expiry.getTime();
-                            userData.username = payerMember.user.username;
+    const content = `
+    <div class="container-fluid">
+        <h2 class="fw-bold mb-4">👋 نظام ترحيب الأعضاء والبطاقات التلقائية</h2>
+        ${req.query.success === 'true' ? `<div class="alert alert-success">تم حفظ إعدادات الترحيب بنجاح!</div>` : ''}
+        
+        <form action="/dashboard/${guildId}/welcome" method="POST">
+            <div class="row">
+                <div class="col-lg-8">
+                    <div class="card glass-card text-white border-0">
+                        <div class="card-header bg-transparent border-0 fw-bold h5">إعدادات بطاقة ورسالة الترحيب</div>
+                        <div class="card-body">
+                            <div class="mb-3 form-check form-switch">
+                                <input class="form-check-input" type="checkbox" name="enabled" ${config.welcome.enabled ? 'checked' : ''}>
+                                <label class="form-check-label fw-bold">تشغيل نظام الترحيب والبطاقات بالروم</label>
+                            </div>
                             
-                            saveDatabase();
-                            syncDatabaseCloud();
+                            <div class="mb-3">
+                                <label class="form-label">روم الترحيب (Welcome Channel)</label>
+                                <select class="form-select bg-dark text-white border-secondary" name="channelId">
+                                    ${channelsHtml}
+                                </select>
+                            </div>
+                            
+                            <div class="mb-3 form-check form-switch">
+                                <input class="form-check-input" type="checkbox" name="mentionUser" ${config.welcome.mentionUser ? 'checked' : ''}>
+                                <label class="form-check-label">عمل منشن للعضو الجديد مع الرسالة</label>
+                            </div>
+                            
+                            <div class="mb-3">
+                                <label class="form-label">نص رسالة الترحيب</label>
+                                <textarea class="form-control bg-dark text-white border-secondary" name="message" rows="3" placeholder="مرحباً بك {user} في سيرفرنا!">${config.welcome.message || ''}</textarea>
+                                <small class="text-muted">استخدم {user} لمنشن العضو.</small>
+                            </div>
+                            
+                            <div class="mb-3">
+                                <label class="form-label">رابط خلفية بطاقة الترحيب (Welcome Card Background)</label>
+                                <input type="text" class="form-control bg-dark text-white border-secondary" name="bgUrl" value="${config.welcome.bgUrl || ''}">
+                                <small class="text-muted">يقوم البوت تلقائياً بتوليد بطاقة ترحيبية احترافية مدمجة بصورة العضو، اسمه، وعدد الأعضاء.</small>
+                            </div>
+                            
+                            <button type="submit" class="btn btn-glow-primary px-5 mt-3">حفظ إعدادات الترحيب والبطاقة 💾</button>
+                        </div>
+                    </div>
+                </div>
+            </div>
+        </form>
+    </div>
+    `;
+    res.send(renderDashboard(content, 'welcome', req, guildId));
+});
 
-                            message.channel.send(`🎉 **تهانينا يا ${payerMember}!** تم التحقق من التحويل المالي للمبلغ \`${price.toLocaleString()}\` Credits بنجاح.\n⭐ **تم تفعيل باقة Premium لـ ${tierGranted === 2 ? 'المستوى الثاني' : 'المستوى الأول'} تلقائياً** وربط الاشتراك بحسابك بنجاح!`);
-                        }
-                    }
-                }
+app.post('/dashboard/:guildId/welcome', checkAuth, checkGuildAccess, (req, res) => {
+    const guildId = req.params.guildId;
+    const config = getGuildConfig(guildId);
+    
+    config.welcome = {
+        enabled: req.body.enabled === 'on',
+        channelId: req.body.channelId,
+        mentionUser: req.body.mentionUser === 'on',
+        message: req.body.message,
+        bgUrl: req.body.bgUrl || "https://i.imgur.com/4S7jFv1.png"
+    };
+    
+    saveGuildConfig(guildId, config);
+    res.redirect(`/dashboard/${guildId}/welcome?success=true`);
+});
+
+// --- 3. نظام مرسل رسائل Embed (Embed Sender Dashboard) ---
+app.get('/dashboard/:guildId/embedsender', checkAuth, checkGuildAccess, (req, res) => {
+    const guildId = req.params.guildId;
+    const config = getGuildConfig(guildId);
+    const guild = client.guilds.cache.get(guildId);
+
+    const channels = guild.channels.cache.filter(c => c.type === ChannelType.GuildText);
+    let channelsHtml = `<option value="">-- اختر روم الإرسال --</option>`;
+    channels.forEach(ch => {
+        channelsHtml += `<option value="${ch.id}" ${config.embedSender.targetChannelId === ch.id ? 'selected' : ''}>#${ch.name}</option>`;
+    });
+
+    const statusMsg = req.query.statusMsg ? `
+        <div class="alert alert-info">
+            الإجراء: ${decodeURIComponent(req.query.statusMsg)}
+        </div>
+    ` : '';
+
+    const content = `
+    <div class="container-fluid">
+        <h2 class="fw-bold mb-4">📢 مرسل رسائل الـ Embed المنسقة بالكامل</h2>
+        ${statusMsg}
+        
+        <form action="/dashboard/${guildId}/embedsender" method="POST">
+            <div class="row">
+                <div class="col-lg-7">
+                    <div class="card glass-card text-white border-0 mb-4">
+                        <div class="card-header bg-transparent border-0 fw-bold h5">بناء رسالة الـ Embed</div>
+                        <div class="card-body">
+                            <div class="mb-3">
+                                <label class="form-label">روم الإرسال المستهدف</label>
+                                <select class="form-select bg-dark text-white border-secondary" name="targetChannelId">
+                                    ${channelsHtml}
+                                </select>
+                            </div>
+                            <div class="mb-3">
+                                <label class="form-label">العنوان (Title)</label>
+                                <input type="text" class="form-control bg-dark text-white border-secondary" name="title" value="${config.embedSender.title || ''}">
+                            </div>
+                            <div class="mb-3">
+                                <label class="form-label">الوصف (Description)</label>
+                                <textarea class="form-control bg-dark text-white border-secondary" name="description" rows="5">${config.embedSender.description || ''}</textarea>
+                            </div>
+                            <div class="mb-3">
+                                <label class="form-label">اللون (Color)</label>
+                                <input type="color" class="form-control form-control-color bg-dark border-secondary w-100" name="color" value="${config.embedSender.color || '#3b82f6'}">
+                            </div>
+                            <div class="mb-3">
+                                <label class="form-label">رابط الصورة الكبيرة (Image URL)</label>
+                                <input type="text" class="form-control bg-dark text-white border-secondary" name="image" value="${config.embedSender.image || ''}">
+                            </div>
+                            <div class="mb-3">
+                                <label class="form-label">رابط مصغرة الصورة (Thumbnail URL)</label>
+                                <input type="text" class="form-control bg-dark text-white border-secondary" name="thumbnail" value="${config.embedSender.thumbnail || ''}">
+                            </div>
+                            <div class="mb-3">
+                                <label class="form-label">الكاتب (Author)</label>
+                                <input type="text" class="form-control bg-dark text-white border-secondary" name="author" value="${config.embedSender.author || ''}">
+                            </div>
+                            <div class="mb-3">
+                                <label class="form-label">تذييل الرسالة (Footer)</label>
+                                <input type="text" class="form-control bg-dark text-white border-secondary" name="footer" value="${config.embedSender.footer || ''}">
+                            </div>
+                        </div>
+                    </div>
+                    
+                    <div class="card glass-card text-white">
+                        <div class="card-body">
+                            <div class="d-flex gap-2 flex-wrap">
+                                <button type="submit" name="action" value="send" class="btn btn-glow-success">إرسال كرسالة جديدة 📢</button>
+                                <button type="submit" name="action" value="edit" class="btn btn-glow-primary" ${!config.embedSender.lastMessageId ? 'disabled' : ''}>تعديل آخر رسالة تم إرسالها ✏️</button>
+                                <button type="submit" name="action" value="delete" class="btn btn-glow-danger" ${!config.embedSender.lastMessageId ? 'disabled' : ''}>حذف آخر رسالة تم إرسالها 🗑️</button>
+                            </div>
+                            ${config.embedSender.lastMessageId ? `<p class="text-success mt-3 small mb-0">تم رصد رسالة نشطة معرفها: ${config.embedSender.lastMessageId}</p>` : ''}
+                        </div>
+                    </div>
+                </div>
+            </div>
+        </form>
+    </div>
+    `;
+    res.send(renderDashboard(content, 'embedsender', req, guildId));
+});
+
+app.post('/dashboard/:guildId/embedsender', checkAuth, checkGuildAccess, async (req, res) => {
+    const guildId = req.params.guildId;
+    const config = getGuildConfig(guildId);
+    const action = req.body.action;
+
+    config.embedSender = {
+        title: req.body.title,
+        description: req.body.description,
+        color: req.body.color || "#3b82f6",
+        image: req.body.image,
+        thumbnail: req.body.thumbnail,
+        footer: req.body.footer,
+        author: req.body.author,
+        targetChannelId: req.body.targetChannelId,
+        lastMessageId: config.embedSender.lastMessageId || ""
+    };
+
+    saveGuildConfig(guildId, config);
+
+    let status = '';
+    try {
+        const channel = client.channels.cache.get(config.embedSender.targetChannelId);
+        if (!channel) throw new Error("لم يتم العثور على القناة المحددة للإرسال.");
+
+        const embed = new EmbedBuilder()
+            .setColor(config.embedSender.color)
+            .setTimestamp();
+
+        if (config.embedSender.title) embed.setTitle(config.embedSender.title);
+        if (config.embedSender.description) embed.setDescription(config.embedSender.description);
+        if (config.embedSender.image) embed.setImage(config.embedSender.image);
+        if (config.embedSender.thumbnail) embed.setThumbnail(config.embedSender.thumbnail);
+        if (config.embedSender.author) embed.setAuthor({ name: config.embedSender.author });
+        if (config.embedSender.footer) embed.setFooter({ text: config.embedSender.footer });
+
+        if (action === 'send') {
+            const msg = await channel.send({ embeds: [embed] });
+            config.embedSender.lastMessageId = msg.id;
+            saveGuildConfig(guildId, config);
+            status = 'تم إرسال رسالة الـ Embed بنجاح!';
+        } else if (action === 'edit') {
+            const msg = await channel.messages.fetch(config.embedSender.lastMessageId);
+            if (msg) {
+                await msg.edit({ embeds: [embed] });
+                status = 'تم تعديل رسالة الـ Embed بنجاح!';
+            }
+        } else if (action === 'delete') {
+            const msg = await channel.messages.fetch(config.embedSender.lastMessageId);
+            if (msg) {
+                await msg.delete();
+                config.embedSender.lastMessageId = "";
+                saveGuildConfig(guildId, config);
+                status = 'تم حذف رسالة الـ Embed بنجاح!';
             }
         }
-        return;
+    } catch (e) {
+        status = 'فشلت العملية: ' + e.message;
     }
 
-    const guildId = message.guildId;
-    if (guildId) {
-        const config = getGuildConfig(guildId);
-        const userData = getUserData(message.author.id);
-        userData.username = message.author.username;
+    res.redirect(`/dashboard/${guildId}/embedsender?statusMsg=${encodeURIComponent(status)}`);
+});
+
+// --- 4. نظام الرتب التلقائية (Auto Role Dashboard) ---
+app.get('/dashboard/:guildId/autorole', checkAuth, checkGuildAccess, (req, res) => {
+    const guildId = req.params.guildId;
+    const config = getGuildConfig(guildId);
+    const guild = client.guilds.cache.get(guildId);
+
+    const roles = guild.roles.cache.filter(r => r.name !== '@everyone');
+    let rolesHtml = `<option value="">-- اختر الرتبة التي يحصل عليها العضو --</option>`;
+    roles.forEach(role => {
+        rolesHtml += `<option value="${role.id}" ${config.autoRole.roleId === role.id ? 'selected' : ''}>@${role.name}</option>`;
+    });
+
+    const content = `
+    <div class="container-fluid">
+        <h2 class="fw-bold mb-4">👤 نظام إعطاء الرتب تلقائياً عند الدخول (Auto Role)</h2>
+        ${req.query.success === 'true' ? `<div class="alert alert-success">تم حفظ إعدادات إعطاء الرتب التلقائي بنجاح!</div>` : ''}
         
-        const xpGained = config.xpPerMessage || 15;
-        userData.xp += xpGained;
-        
-        const nextLevelThreshold = userData.level * userData.level * 350;
-        if (userData.xp >= nextLevelThreshold) {
-            userData.level += 1;
-            userData.coins += 5;
-            message.channel.send(`🎉 **مبارك صعود مستواك يا ${message.author}!** لقد وصلت الآن للمستوى **${userData.level}** وحصلت على عملات تشجيعية مجاناً!`).catch(() => {});
+        <form action="/dashboard/${guildId}/autorole" method="POST">
+            <div class="row">
+                <div class="col-lg-8">
+                    <div class="card glass-card text-white border-0">
+                        <div class="card-header bg-transparent border-0 fw-bold h5">تخصيص رتب الدخول التلقائية</div>
+                        <div class="card-body">
+                            <div class="mb-4 form-check form-switch">
+                                <input class="form-check-input" type="checkbox" name="enabled" ${config.autoRole.enabled ? 'checked' : ''}>
+                                <label class="form-check-label fw-bold">تشغيل نظام Auto Role بالسيرفر</label>
+                            </div>
+                            
+                            <div class="mb-4">
+                                <label class="form-label">الرتبة الممنوحة تلقائياً عند الدخول</label>
+                                <select class="form-select bg-dark text-white border-secondary" name="roleId">
+                                    ${rolesHtml}
+                                </select>
+                            </div>
+                            
+                            <button type="submit" class="btn btn-glow-primary px-5">حفظ إعدادات الرتب 💾</button>
+                        </div>
+                    </div>
+                </div>
+            </div>
+        </form>
+    </div>
+    `;
+    res.send(renderDashboard(content, 'autorole', req, guildId));
+});
+
+app.post('/dashboard/:guildId/autorole', checkAuth, checkGuildAccess, (req, res) => {
+    const guildId = req.params.guildId;
+    const config = getGuildConfig(guildId);
+    
+    config.autoRole = {
+        enabled: req.body.enabled === 'on',
+        roleId: req.body.roleId
+    };
+    
+    saveGuildConfig(guildId, config);
+    res.redirect(`/dashboard/${guildId}/autorole?success=true`);
+});
+
+// ==================== دوال وتفاعلات ديسكورد للبوت ====================
+
+// دقة ترحيب الأعضاء ودخولهم (Welcome Card & Auto Role Events)
+client.on('guildMemberAdd', async member => {
+    const guildId = member.guild.id;
+    const config = getGuildConfig(guildId);
+
+    // 1. تفعيل وتطبيق الـ Auto Role عند الدخول
+    if (config.autoRole && config.autoRole.enabled && config.autoRole.roleId) {
+        try {
+            const role = member.guild.roles.cache.get(config.autoRole.roleId);
+            if (role) {
+                await member.roles.add(role);
+            }
+        } catch (e) {
+            console.error("Auto Role Error: ", e.message);
         }
-        saveDatabase();
+    }
+
+    // 2. تفعيل وتطبيق نظام الترحيب المطور مع توليد البطاقة الرسومية التلقائية
+    if (config.welcome && config.welcome.enabled && config.welcome.channelId) {
+        const channel = member.guild.channels.cache.get(config.welcome.channelId);
+        if (channel) {
+            const memberCount = member.guild.memberCount;
+            const welcomeText = (config.welcome.message || "مرحباً بك {user}").replace('{user}', `${member}`);
+
+            // توليد بطاقة ترحيب احترافية بتنسيق SVG عالي الدقة وسريع للتشغيل السحابي
+            const avatarUrl = member.user.displayAvatarURL({ extension: 'png', size: 256 }) || 'https://cdn.discordapp.com/embed/avatars/0.png';
+            const cleanName = member.user.username.replace(/[^a-zA-Z0-9\s]/g, '');
+
+            const svgCard = `
+            <svg width="800" height="350" viewBox="0 0 800 350" xmlns="http://www.w3.org/2000/svg">
+                <!-- الخلفية والمؤثرات الزجاجية -->
+                <rect width="800" height="350" rx="20" fill="#0d1117" />
+                <rect x="10" y="10" width="780" height="330" rx="15" fill="none" stroke="#21262d" stroke-width="3" />
+                
+                <!-- خطوط التزيين والنيون -->
+                <circle cx="400" cy="110" r="70" fill="none" stroke="#3b82f6" stroke-width="4" />
+                
+                <!-- صورة العضو الاسم والتفاصيل -->
+                <clipPath id="avatar-clip">
+                    <circle cx="400" cy="110" r="68" />
+                </clipPath>
+                <image href="${avatarUrl}" x="332" y="42" width="136" height="136" clip-path="url(#avatar-clip)" />
+                
+                <!-- نصوص الترحيب -->
+                <text x="400" y="225" font-family="'Segoe UI', 'Cairo', sans-serif" font-size="28" font-weight="bold" fill="#ffffff" text-anchor="middle">مرحباً بك في السيرفر</text>
+                <text x="400" y="265" font-family="'Segoe UI', 'Cairo', sans-serif" font-size="24" font-weight="600" fill="#3b82f6" text-anchor="middle">${cleanName}</text>
+                <text x="400" y="305" font-family="'Segoe UI', 'Cairo', sans-serif" font-size="18" fill="#8b5cf6" text-anchor="middle">أنت العضو رقم #${memberCount} في السيرفر</text>
+            </svg>
+            `;
+
+            const buffer = Buffer.from(svgCard, 'utf-8');
+            const attachment = new AttachmentBuilder(buffer, { name: 'welcome-card.svg' });
+
+            channel.send({
+                content: welcomeText,
+                files: [attachment]
+            }).catch(e => console.error("Error sending welcome message: ", e.message));
+        }
     }
 });
 
-// تفاعلات أزرار التذاكر ومودالات التحكم
+// استقبال الرسائل وتطبيق الرد التلقائي (Auto Reply Message Receiver)
+client.on('messageCreate', async message => {
+    if (message.author.bot) return;
+    const guildId = message.guildId;
+    if (!guildId) return;
+
+    const config = getGuildConfig(guildId);
+    
+    // فحص وتطبيق الرد التلقائي المضاف عبر لوحة التحكم
+    if (config.autoReplies && config.autoReplies.length > 0) {
+        const text = message.content.toLowerCase().trim();
+        const found = config.autoReplies.find(item => item.enabled && item.keyword.toLowerCase().trim() === text);
+        
+        if (found) {
+            message.channel.send(found.reply).catch(e => console.error(e.message));
+        }
+    }
+});
+
+// تفاعل وتلقي انضمام البوت لسيرفر جديد (Auto Role Assign for Bot)
+client.on('guildCreate', async guild => {
+    // محاولة جلب الإعدادات المسبقة
+    const config = getGuildConfig(guild.id);
+    console.log(`Bot joined new guild: ${guild.name}`);
+});
+
+// تفاعلات أزرار ومودالات التذاكر
 client.on('interactionCreate', async interaction => {
     if (!interaction.guild) return;
     const guildId = interaction.guild.id;
@@ -1532,7 +1606,7 @@ client.on('interactionCreate', async interaction => {
             const btnConfig = config.buttons[index];
 
             if (!btnConfig) {
-                return interaction.editReply({ content: "خطأ: لم يتم العثور على إعدادات الزر بالسيرفر." });
+                return interaction.editReply({ content: "خطأ: لم يتم العثور على إعدادات هذا الزر بالملفات." });
             }
 
             const maxLimit = Number(config.maxTicketsPerUser) || 4;
@@ -1790,60 +1864,7 @@ client.on('interactionCreate', async interaction => {
     }
 });
 
-// دالة تسجيل اللوق والأحداث
-function logEvent(type, guildId, data) {
-    const config = getGuildConfig(guildId);
-    const guild = client.guilds.cache.get(guildId);
-    if (!guild) return;
-    const logChannel = guild.channels.cache.get(config.logsChannelId);
-    if (!logChannel) return;
-
-    const embed = new EmbedBuilder()
-        .setColor(config.dashboardColor || "#3b82f6")
-        .setTimestamp();
-
-    switch (type) {
-        case 'open':
-            embed.setTitle('📂 تم إنشاء تكت جديد')
-                 .setDescription(`**صاحب التكت:** ${data.user} (${data.user.id})\n**قناة التكت:** ${data.channel}\n**نوع القسم المختار:** ${data.buttonLabel}`);
-            break;
-        case 'close':
-            embed.setTitle('🔒 تم إغلاق وتصنيف تكت')
-                 .setDescription(`**تم الإغلاق بواسطة:** ${data.user} (${data.user.id})\n**اسم روم التكت:** ${data.channel.name}`);
-            break;
-        case 'claim':
-            embed.setTitle('🔑 تم استلام تكت ومتابعته')
-                 .setDescription(`**المشرف المسؤول:** ${data.user} (${data.user.id})\n**التكت المستهدف:** ${data.channel}`);
-            break;
-        case 'rename':
-            embed.setTitle('✏️ تم تعديل اسم التكت')
-                 .setDescription(`**بواسطة:** ${data.user} (${data.user.id})\n**قناة التكت:** ${data.channel}\n**الاسم الجديد المطبق:** ${data.details}`);
-            break;
-        case 'add_member':
-            embed.setTitle('👤 إضافة عضو جديد للتكت')
-                 .setDescription(`**بواسطة:** ${data.user} (${data.user.id})\n**التكت:** ${data.channel}\n**العضو الذي تمت إضافته:** ${data.details}`);
-            break;
-        case 'remove_member':
-            embed.setTitle('➖ إزالة عضو من التكت')
-                 .setDescription(`**بواسطة:** ${data.user} (${data.user.id})\n**التكت:** ${data.channel}\n**العضو الذي تمت إزالته:** ${data.details}`);
-            break;
-        case 'embed_send':
-            embed.setTitle('📢 نشر لوحة الأزرار الأساسية')
-                 .setDescription(`**بواسطة المسؤول:** ${data.user}\n**القناة المستهدفة:** ${data.channel}`);
-            break;
-        case 'embed_edit':
-            embed.setTitle('✏️ تعديل وتحديث لوحة التكت')
-                 .setDescription(`**بواسطة المسؤول:** ${data.user}`);
-            break;
-        case 'embed_delete':
-            embed.setTitle('🗑️ إزالة وحذف لوحة التكت')
-                 .setDescription(`**بواسطة المسؤول:** ${data.user}`);
-            break;
-    }
-
-    logChannel.send({ embeds: [embed] }).catch(() => {});
-}
-
+// دالة توليد أرشيف التكت
 async function generateTranscript(channel) {
     const messages = await channel.messages.fetch({ limit: 100 });
     const sortedMsgs = Array.from(messages.values()).reverse();
