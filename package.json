@@ -1,7 +1,7 @@
 {
   "name": "pro-ticket-bot-v1",
   "version": "1.0.0",
-  "description": "Professional Discord Ticket Bot with Premium SaaS Glassmorphism Dashboard and Auto-Features",
+  "description": "Professional Discord Ticket Bot with SaaS Glassmorphism Dashboard",
   "main": "index.js",
   "scripts": {
     "start": "node index.js"
