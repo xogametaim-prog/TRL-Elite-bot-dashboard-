@@ -1,4 +1,4 @@
-// استيراد المكتبات الأساسية
+// استيراد المكتبات الأساسية لـ ديسكورد والويب
 const { 
     Client, 
     GatewayIntentBits, 
@@ -20,8 +20,8 @@ const DiscordStrategy = require('passport-discord').Strategy;
 const fs = require('fs');
 const path = require('path');
 
-// التحقق من متغيرات البيئة الأساسية وإظهار تحذيرات عند فقدانها
-const requiredEnv = ['DISCORD_TOKEN', 'CLIENT_ID', 'CLIENT_SECRET', 'CALLBACK_URL', 'SESSION_SECRET', 'GUILD_ID'];
+// التحقق من متغيرات البيئة الأساسية (تم الاستغناء عن GUILD_ID الثابت)
+const requiredEnv = ['DISCORD_TOKEN', 'CLIENT_ID', 'CLIENT_SECRET', 'CALLBACK_URL', 'SESSION_SECRET'];
 requiredEnv.forEach(env => {
     if (!process.env[env]) {
         console.warn(`[WARNING] Missing environment variable: ${env}`);
@@ -30,53 +30,70 @@ requiredEnv.forEach(env => {
 
 const configPath = path.join(__dirname, 'config.json');
 
-// دالة لقراءة الإعدادات من config.json بشكل آمن
-function readConfig() {
+// دالة لقراءة إعدادات السيرفر المحدد من config.json بشكل آمن ومستقل
+function getGuildConfig(guildId) {
+    let fullConfig = {};
     try {
-        if (!fs.existsSync(configPath)) {
-            const defaultConfig = {
-                logsChannelId: "",
-                embedChannelId: "",
-                defaultCategoryId: "",
-                dashboardColor: "#3b82f6",
-                botDisplayName: "نظام التكت المتكامل",
-                embed: {
-                    title: "نظام الدعم الفني والمساعدة",
-                    description: "يرجى الضغط على أحد الأزرار بالأسفل لفتح تكت تواصل جديدة.",
-                    color: "#3b82f6",
-                    author: "قسم المساعدة",
-                    footer: "نحن هنا لمساعدتكم",
-                    thumbnail: "",
-                    image: "",
-                    timestamp: true
-                },
-                buttons: [
-                    {
-                        label: "الدعم الفني العامة",
-                        emoji: "🎫",
-                        style: "PRIMARY",
-                        ticketName: "ticket-{username}",
-                        mentionRole: "",
-                        categoryId: "",
-                        welcomeMessage: "مرحباً {user} في تكت الدعم الفني! يرجى طرح مشكلتك مباشرة."
-                    }
-                ],
-                activeEmbedMessageId: ""
-            };
-            fs.writeFileSync(configPath, JSON.stringify(defaultConfig, null, 2), 'utf8');
-            return defaultConfig;
+        if (fs.existsSync(configPath)) {
+            fullConfig = JSON.parse(fs.readFileSync(configPath, 'utf8'));
         }
-        return JSON.parse(fs.readFileSync(configPath, 'utf8'));
     } catch (err) {
         console.error("خطأ في قراءة ملف الإعدادات: ", err);
-        return {};
     }
+
+    // إذا لم تكن هناك إعدادات لهذا السيرفر، يتم إنشاء إعدادات افتراضية له
+    if (!fullConfig[guildId]) {
+        fullConfig[guildId] = {
+            logsChannelId: "",
+            embedChannelId: "",
+            defaultCategoryId: "",
+            dashboardColor: "#3b82f6",
+            botDisplayName: "نظام التكت المتكامل",
+            embed: {
+                title: "نظام الدعم الفني والمساعدة",
+                description: "يرجى الضغط على أحد الأزرار بالأسفل لفتح تكت تواصل جديدة مع قسم الدعم الفني.",
+                color: "#3b82f6",
+                author: "قسم المساعدة",
+                footer: "نحن هنا لمساعدتكم",
+                thumbnail: "",
+                image: "",
+                timestamp: true
+            },
+            buttons: [
+                {
+                    label: "الدعم الفني العامة",
+                    emoji: "🎫",
+                    style: "PRIMARY",
+                    ticketName: "ticket-{username}",
+                    mentionRole: "",
+                    categoryId: "",
+                    welcomeMessage: "مرحباً {user} في تكت الدعم الفني! يرجى طرح مشكلتك مباشرة وسيقوم الفريق بالرد عليك قريباً."
+                }
+            ],
+            activeEmbedMessageId: ""
+        };
+        // حفظ الإعدادات الافتراضية فوراً في الملف
+        fs.writeFileSync(configPath, JSON.stringify(fullConfig, null, 2), 'utf8');
+    }
+
+    return fullConfig[guildId];
 }
 
-// دالة لحفظ الإعدادات في config.json
-function writeConfig(newConfig) {
+// دالة لحفظ وتحديث إعدادات السيرفر المحدد في config.json
+function saveGuildConfig(guildId, guildConfig) {
+    let fullConfig = {};
     try {
-        fs.writeFileSync(configPath, JSON.stringify(newConfig, null, 2), 'utf8');
+        if (fs.existsSync(configPath)) {
+            fullConfig = JSON.parse(fs.readFileSync(configPath, 'utf8'));
+        }
+    } catch (err) {
+        console.error("خطأ في قراءة ملف الإعدادات قبل الحفظ: ", err);
+    }
+
+    fullConfig[guildId] = guildConfig;
+
+    try {
+        fs.writeFileSync(configPath, JSON.stringify(fullConfig, null, 2), 'utf8');
     } catch (err) {
         console.error("خطأ في كتابة ملف الإعدادات: ", err);
     }
@@ -97,9 +114,8 @@ const client = new Client({
 const app = express();
 const PORT = process.env.PORT || 3000;
 
-// إعداد جلسات الخادم (Sessions)
 app.use(session({
-    secret: process.env.SESSION_SECRET || 'secret-dashboard-key',
+    secret: process.env.SESSION_SECRET || 'secret-multi-guild-key',
     resave: false,
     saveUninitialized: false
 }));
@@ -107,7 +123,6 @@ app.use(session({
 app.use(express.json());
 app.use(express.urlencoded({ extended: true }));
 
-// تهيئة نظام Passport للاتصال بـ Discord OAuth2
 app.use(passport.initialize());
 app.use(passport.session());
 
@@ -123,41 +138,58 @@ passport.use(new DiscordStrategy({
     process.nextTick(() => done(null, profile));
 }));
 
-// جدار حماية (Middleware) للتحقق من تسجيل الدخول
+// جدار حماية للتحقق من تسجيل الدخول
 function checkAuth(req, res, next) {
     if (req.isAuthenticated()) return next();
     res.redirect('/login');
 }
 
-// جدار حماية للتحقق من وجود المستخدم في السيرفر المطلوب وامتلاكه لصلاحية الإدارة
+// جدار حماية يفحص صلاحيات المستخدم في السيرفر المطلوب ديناميكياً عبر الرابط (URL Parameters)
 function checkGuildAccess(req, res, next) {
-    const guildId = process.env.GUILD_ID;
-    if (!guildId) {
-        return res.status(500).send("خطأ: لم يتم ضبط قيمة GUILD_ID في متغيرات البيئة.");
-    }
+    const guildId = req.params.guildId;
+    if (!guildId) return res.redirect('/dashboard');
+
     const userGuilds = req.user.guilds;
     const targetGuild = userGuilds.find(g => g.id === guildId);
+    
     if (!targetGuild) {
-        return res.status(403).send("عذراً، أنت لست عضواً في السيرفر المخصص لإدارة البوت.");
+        return res.status(403).send("عذراً، أنت لست عضواً في هذا السيرفر.");
     }
-    // صلاحية Administrator هي 0x8 و Manage Guild هي 0x20
+
+    // التحقق من امتلاك صلاحية Administrator (0x8) أو Manage Guild (0x20)
     const permissions = Number(targetGuild.permissions);
     const isAdmin = (permissions & 0x8) === 0x8;
     const isManageGuild = (permissions & 0x20) === 0x20;
 
     if (isAdmin || isManageGuild) {
+        // التحقق من وجود البوت بالفعل داخل هذا السيرفر لتجنب الأخطاء البرمجية
+        const botInGuild = client.guilds.cache.has(guildId);
+        if (!botInGuild) {
+            return res.status(403).send(`
+                <h3>البوت غير موجود في هذا السيرفر!</h3>
+                <p>يرجى دعوة البوت أولاً إلى السيرفر لتتمكن من إدارته.</p>
+                <a href="https://discord.com/oauth2/authorize?client_id=${process.env.CLIENT_ID}&permissions=8&integration_type=0&scope=bot+applications.commands" class="btn btn-primary" target="_blank">دعوة البوت من هنا</a>
+            `);
+        }
         return next();
     }
-    return res.status(403).send("عذراً، لا تمتلك الصلاحيات الإدارية المطلوبة لدخول لوحة التحكم (Administrator أو Manage Server).");
+    return res.status(403).send("عذراً، لا تمتلك الصلاحيات الإدارية الكافية لإدارة هذا السيرفر من لوحة التحكم.");
 }
 
-// تصميم الهيكل الخارجي الموحد للداشبورد (Sidebar & Navbar Layout)
-function renderDashboard(content, activeTab, req) {
+// تصميم الهيكل الخارجي الموحد للداشبورد المطور ليدعم تعدد السيرفرات
+function renderDashboard(content, activeTab, req, currentGuildId = null) {
     const user = req.user;
     const avatarUrl = user.avatar ? `https://cdn.discordapp.com/avatars/${user.id}/${user.avatar}.png` : 'https://cdn.discordapp.com/embed/avatars/0.png';
-    const config = readConfig();
+    
+    // جلب الإعدادات الخاصة بالسيرفر الحالي أو الإعدادات الافتراضية
+    const config = currentGuildId ? getGuildConfig(currentGuildId) : {};
     const botName = config.botDisplayName || "نظام التكت";
     const botColor = config.dashboardColor || "#3b82f6";
+
+    // روابط السيرفر المحدد أو روابط عامة
+    const homeLink = currentGuildId ? `/dashboard/${currentGuildId}` : '/dashboard';
+    const ticketLink = currentGuildId ? `/dashboard/${currentGuildId}/ticket-msg` : '#';
+    const settingsLink = currentGuildId ? `/dashboard/${currentGuildId}/settings` : '#';
 
     return `
     <!DOCTYPE html>
@@ -216,6 +248,10 @@ function renderDashboard(content, activeTab, req) {
             .nav-link:hover, .nav-link.active {
                 background-color: var(--accent-color);
                 color: #fff !important;
+            }
+            .nav-link.disabled {
+                opacity: 0.4;
+                pointer-events: none;
             }
             .card-custom {
                 background-color: var(--bg-sidebar);
@@ -278,14 +314,17 @@ function renderDashboard(content, activeTab, req) {
                 </div>
             </div>
             <div class="py-3">
-                <a href="/dashboard" class="nav-link ${activeTab === 'home' ? 'active' : ''}">
-                    <i class="bi bi-speedometer2"></i> الرئيسية
+                <a href="/dashboard" class="nav-link ${activeTab === 'select' ? 'active' : ''}">
+                    <i class="bi bi-arrow-left-right"></i> تغيير السيرفر
                 </a>
-                <a href="/dashboard/ticket-msg" class="nav-link ${activeTab === 'ticket' ? 'active' : ''}">
+                <a href="${homeLink}" class="nav-link ${activeTab === 'home' ? 'active' : ''} ${!currentGuildId ? 'disabled' : ''}">
+                    <i class="bi bi-speedometer2"></i> الرئيسية للتحكم
+                </a>
+                <a href="${ticketLink}" class="nav-link ${activeTab === 'ticket' ? 'active' : ''} ${!currentGuildId ? 'disabled' : ''}">
                     <i class="bi bi-chat-square-text"></i> تصميم الرسالة والأزرار
                 </a>
-                <a href="/dashboard/settings" class="nav-link ${activeTab === 'settings' ? 'active' : ''}">
-                    <i class="bi bi-gear"></i> إعدادات التحكم
+                <a href="${settingsLink}" class="nav-link ${activeTab === 'settings' ? 'active' : ''} ${!currentGuildId ? 'disabled' : ''}">
+                    <i class="bi bi-gear"></i> إعدادات التحكم والقنوات
                 </a>
                 <hr class="mx-3 border-secondary">
                 <a href="/logout" class="nav-link text-danger">
@@ -324,7 +363,7 @@ app.get('/', (req, res) => {
     <head>
         <meta charset="UTF-8">
         <meta name="viewport" content="width=device-width, initial-scale=1.0">
-        <title>تسجيل الدخول - نظام التكت</title>
+        <title>تسجيل الدخول - نظام التكت المتعدد</title>
         <link rel="stylesheet" href="https://cdn.jsdelivr.net/npm/bootstrap@5.3.0/dist/css/bootstrap.rtl.min.css">
         <link rel="stylesheet" href="https://cdn.jsdelivr.net/npm/bootstrap-icons@1.11.1/font/bootstrap-icons.css">
         <style>
@@ -364,9 +403,9 @@ app.get('/', (req, res) => {
     </head>
     <body>
         <div class="login-card">
-            <i class="bi bi-ticket-perforated text-primary" style="font-size: 4.5rem;"></i>
-            <h2 class="my-3">لوحة تحكم نظام التكت</h2>
-            <p class="text-muted mb-4">بوابة تسجيل دخول آمنة للمسؤولين ومساعدي السيرفر لإدارة وإنشاء رسائل الدعم.</p>
+            <i class="bi bi-server text-primary" style="font-size: 4.5rem;"></i>
+            <h2 class="my-3">لوحة تحكم التكت المتعددة</h2>
+            <p class="text-muted mb-4">بوابة تسجيل دخول آمنة للمسؤولين. تمكنك اللوحة من اختيار أي سيرفر تملكه وإدارته وتخصيصه بشكل منفصل.</p>
             <a href="/login" class="btn btn-discord">
                 <i class="bi bi-discord"></i> تسجيل الدخول بواسطة ديسكورد
             </a>
@@ -376,7 +415,7 @@ app.get('/', (req, res) => {
     `);
 });
 
-// توجيه OAuth2 لـ ديسكورد
+// توجيه OAuth2
 app.get('/login', passport.authenticate('discord'));
 app.get('/callback', passport.authenticate('discord', { failureRedirect: '/' }), (req, res) => {
     res.redirect('/dashboard');
@@ -389,11 +428,55 @@ app.get('/logout', (req, res, next) => {
     });
 });
 
-// صفحة الإحصائيات والمعلومات (الرئيسية للداشبورد)
-app.get('/dashboard', checkAuth, checkGuildAccess, (req, res) => {
-    const guild = client.guilds.cache.get(process.env.GUILD_ID);
-    const serverCount = client.guilds.cache.size;
-    const userCount = guild ? guild.memberCount : 0;
+// صفحة اختيار السيرفر (Server Selector)
+app.get('/dashboard', checkAuth, (req, res) => {
+    const userGuilds = req.user.guilds;
+    
+    // تصفية السيرفرات التي يملك فيها المستخدم صلاحيات إدارية (Admin: 0x8 أو Manage Server: 0x20)
+    const adminGuilds = userGuilds.filter(g => {
+        const perms = Number(g.permissions);
+        return (perms & 0x8) === 0x8 || (perms & 0x20) === 0x20;
+    });
+
+    let guildsListHtml = '';
+    adminGuilds.forEach(g => {
+        const botInGuild = client.guilds.cache.has(g.id);
+        const iconUrl = g.icon ? `https://cdn.discordapp.com/icons/${g.id}/${g.icon}.png` : 'https://cdn.discordapp.com/embed/avatars/0.png';
+        
+        guildsListHtml += `
+        <div class="col-md-6 col-lg-4 mb-4">
+            <div class="card card-custom h-100 text-center">
+                <div class="card-body d-flex flex-column align-items-center justify-content-between">
+                    <img src="${iconUrl}" alt="${g.name}" class="rounded-circle mb-3 border border-secondary" width="70" height="70">
+                    <h5 class="card-title text-truncate w-100 mb-3">${g.name}</h5>
+                    ${botInGuild ? `
+                        <a href="/dashboard/${g.id}" class="btn btn-success w-100">دخول لوحة التحكم <i class="bi bi-box-arrow-in-left"></i></a>
+                    ` : `
+                        <a href="https://discord.com/oauth2/authorize?client_id=${process.env.CLIENT_ID}&permissions=8&integration_type=0&scope=bot+applications.commands" class="btn btn-primary w-100" target="_blank">دعوة البوت أولاً <i class="bi bi-plus-lg"></i></a>
+                    `}
+                </div>
+            </div>
+        </div>
+        `;
+    });
+
+    const content = `
+    <div class="container-fluid">
+        <h2 class="h3 mb-2">اختر السيرفر المراد إدارته</h2>
+        <p class="text-muted mb-4">جميع السيرفرات بالأسفل تملك فيها رتبة إدارية لإدارتها وتخصيص نظام التذاكر الخاص بها.</p>
+        <div class="row">
+            ${guildsListHtml || '<div class="col-12 text-center text-muted py-5"><p>لا توجد سيرفرات تملك فيها صلاحيات إدارية كافية حالياً.</p></div>'}
+        </div>
+    </div>
+    `;
+
+    res.send(renderDashboard(content, 'select', req));
+});
+
+// الصفحة الرئيسية لإحصائيات السيرفر المحدد
+app.get('/dashboard/:guildId', checkAuth, checkGuildAccess, (req, res) => {
+    const guildId = req.params.guildId;
+    const guild = client.guilds.cache.get(guildId);
     
     let openTickets = 0;
     if (guild) {
@@ -406,7 +489,10 @@ app.get('/dashboard', checkAuth, checkGuildAccess, (req, res) => {
 
     const content = `
     <div class="container-fluid">
-        <h2 class="h3 mb-4">الصفحة الرئيسية</h2>
+        <div class="mb-4">
+            <h2 class="h3 mb-1">الرئيسية للسيرفر: ${guild.name}</h2>
+            <p class="text-muted">أنت تدير الآن إعدادات هذا السيرفر المستقلة بالكامل.</p>
+        </div>
         
         <div class="row">
             <div class="col-xl-3 col-md-6 mb-4">
@@ -428,8 +514,8 @@ app.get('/dashboard', checkAuth, checkGuildAccess, (req, res) => {
                     <div class="card-body">
                         <div class="row align-items-center">
                             <div class="col">
-                                <div class="text-xs text-success text-uppercase mb-1">عدد السيرفرات المتصلة</div>
-                                <div class="h5 mb-0 fw-bold">${serverCount}</div>
+                                <div class="text-xs text-success text-uppercase mb-1">إجمالي السيرفرات</div>
+                                <div class="h5 mb-0 fw-bold">${client.guilds.cache.size}</div>
                             </div>
                             <div class="col-auto"><i class="bi bi-server text-secondary" style="font-size: 2rem;"></i></div>
                         </div>
@@ -442,7 +528,7 @@ app.get('/dashboard', checkAuth, checkGuildAccess, (req, res) => {
                     <div class="card-body">
                         <div class="row align-items-center">
                             <div class="col">
-                                <div class="text-xs text-info text-uppercase mb-1">عدد التكتات المفتوحة</div>
+                                <div class="text-xs text-info text-uppercase mb-1">تكتات السيرفر المفتوحة</div>
                                 <div class="h5 mb-0 fw-bold">${openTickets}</div>
                             </div>
                             <div class="col-auto"><i class="bi bi-chat-dots text-secondary" style="font-size: 2rem;"></i></div>
@@ -456,8 +542,8 @@ app.get('/dashboard', checkAuth, checkGuildAccess, (req, res) => {
                     <div class="card-body">
                         <div class="row align-items-center">
                             <div class="col">
-                                <div class="text-xs text-warning text-uppercase mb-1">عدد أعضاء السيرفر</div>
-                                <div class="h5 mb-0 fw-bold">${userCount}</div>
+                                <div class="text-xs text-warning text-uppercase mb-1">أعضاء هذا السيرفر</div>
+                                <div class="h5 mb-0 fw-bold">${guild.memberCount}</div>
                             </div>
                             <div class="col-auto"><i class="bi bi-people text-secondary" style="font-size: 2rem;"></i></div>
                         </div>
@@ -469,29 +555,25 @@ app.get('/dashboard', checkAuth, checkGuildAccess, (req, res) => {
         <div class="row mt-4">
             <div class="col-lg-6">
                 <div class="card card-custom">
-                    <div class="card-header">معلومات نظام التشغيل والبوت</div>
+                    <div class="card-header">معلومات نظام التشغيل والأداء</div>
                     <div class="card-body">
                         <table class="table table-dark table-hover table-borderless m-0">
                             <tbody>
                                 <tr>
-                                    <td>وقت تشغيل الخادم المستمر (Uptime)</td>
+                                    <td>وقت التشغيل الكلي (Uptime)</td>
                                     <td class="text-end text-info">${uptime} دقيقة</td>
                                 </tr>
                                 <tr>
-                                    <td>سرعة استجابة بوابة ديسكورد (Ping)</td>
+                                    <td>سرعة الاستجابة (Ping)</td>
                                     <td class="text-end text-info">${ping} ms</td>
                                 </tr>
                                 <tr>
-                                    <td>استهلاك ذاكرة الرام الحية (RAM)</td>
+                                    <td>استهلاك ذاكرة الرام (RAM)</td>
                                     <td class="text-end text-info">${ramUsage} MB</td>
                                 </tr>
                                 <tr>
-                                    <td>إصدار المكتبة (discord.js)</td>
-                                    <td class="text-end text-info">v14</td>
-                                </tr>
-                                <tr>
-                                    <td>اسم السيرفر المربوط</td>
-                                    <td class="text-end text-info">${guild ? guild.name : 'Unknown'}</td>
+                                    <td>إصدار المكتبة الأساسي</td>
+                                    <td class="text-end text-info">discord.js v14</td>
                                 </tr>
                             </tbody>
                         </table>
@@ -500,16 +582,15 @@ app.get('/dashboard', checkAuth, checkGuildAccess, (req, res) => {
             </div>
             <div class="col-lg-6">
                 <div class="card card-custom">
-                    <div class="card-header">شرح وبدء الاستخدام السريع</div>
+                    <div class="card-header">بدء الاستخدام وتصميم الأزرار</div>
                     <div class="card-body">
-                        <p>أهلاً بك في نظام التذاكر التفاعلي الاحترافي. تتيح لك لوحة التحكم الآتية:</p>
+                        <p>أنت الآن في لوحة الإدارة المستقلة. يتيح لك النظام الحالي للتحكم بـ:</p>
                         <ul>
-                            <li>إنشاء لوحة الأزرار وإرسالها إلى أي روم ترغب به.</li>
-                            <li>تغيير إعدادات رومات اللوق والرومات الأساسية فورياً.</li>
-                            <li>مراجعة الأرشيف (Transcripts) وإرسالها إلى روم اللوق الخاص بك مباشرة عند الإغلاق.</li>
+                            <li>تخصيص رومات الإرسال واللوج والكاتيجوري الخاص بهذا السيرفر بشكل مستقل.</li>
+                            <li>تصميم وبناء رسالة التكت الخاصة بهذا السيرفر مع معاينة مباشرة وتعديلها أو حذفها بأي وقت.</li>
                         </ul>
                         <div class="d-grid mt-4">
-                            <a href="/dashboard/ticket-msg" class="btn btn-primary">تجهيز وإرسال رسالة التكت للديسكورد</a>
+                            <a href="/dashboard/${guildId}/ticket-msg" class="btn btn-primary">تعديل وتصميم رسالة التكت للسيرفر</a>
                         </div>
                     </div>
                 </div>
@@ -517,45 +598,47 @@ app.get('/dashboard', checkAuth, checkGuildAccess, (req, res) => {
         </div>
     </div>
     `;
-    res.send(renderDashboard(content, 'home', req));
+    res.send(renderDashboard(content, 'home', req, guildId));
 });
 
-// صفحة الإعدادات العامة للبوت
-app.get('/dashboard/settings', checkAuth, checkGuildAccess, (req, res) => {
-    const config = readConfig();
+// صفحة الإعدادات العامة للسيرفر المحدد
+app.get('/dashboard/:guildId/settings', checkAuth, checkGuildAccess, (req, res) => {
+    const guildId = req.params.guildId;
+    const config = getGuildConfig(guildId);
+    
     const successMsg = req.query.success === 'true' ? `
         <div class="alert alert-success alert-dismissible fade show" role="alert">
-            تم حفظ جميع الإعدادات العامة بنجاح وتحديث ملف الإعدادات.
+            تم حفظ إعدادات السيرفر بنجاح في ملف config.json.
             <button type="button" class="btn-close" data-bs-dismiss="alert" aria-label="Close"></button>
         </div>
     ` : '';
 
     const content = `
     <div class="container-fluid">
-        <h2 class="h3 mb-4">إعدادات قنوات وهيكل التكت</h2>
+        <h2 class="h3 mb-4">إعدادات قنوات وهيكل التكت لسيرفرك</h2>
         ${successMsg}
         
-        <form action="/dashboard/settings" method="POST">
+        <form action="/dashboard/${guildId}/settings" method="POST">
             <div class="row">
                 <div class="col-lg-8">
                     <div class="card card-custom">
-                        <div class="card-header">الإعدادات العامة للقنوات بالديسكورد</div>
+                        <div class="card-header">الإعدادات العامة لقنوات السيرفر</div>
                         <div class="card-body">
                             <div class="mb-3">
                                 <label class="form-label">معرف روم السجلات واللوق (Logs Channel ID)</label>
                                 <input type="text" class="form-control bg-dark text-white border-secondary" name="logsChannelId" value="${config.logsChannelId || ''}" placeholder="أدخل ID قناة السجلات">
                             </div>
                             <div class="mb-3">
-                                <label class="form-label">معرف روم إرسال رسالة التكت واللوحة (Embed Channel ID)</label>
+                                <label class="form-label">معرف روم إرسال رسالة التكت (Embed Channel ID)</label>
                                 <input type="text" class="form-control bg-dark text-white border-secondary" name="embedChannelId" value="${config.embedChannelId || ''}" placeholder="أدخل ID قناة الرسالة الأساسية">
                             </div>
                             <div class="mb-3">
-                                <label class="form-label">معرف الكاتيجوري الافتراضي لفتح التكتات به (Default Category ID)</label>
+                                <label class="form-label">معرف الكاتيجوري الافتراضي لإنشاء التكتات (Default Category ID)</label>
                                 <input type="text" class="form-control bg-dark text-white border-secondary" name="defaultCategoryId" value="${config.defaultCategoryId || ''}" placeholder="أدخل ID التصنيف الافتراضي">
                             </div>
                             <div class="mb-3">
                                 <label class="form-label">اسم البوت ومسؤول النظام بالواجهات</label>
-                                <input type="text" class="form-control bg-dark text-white border-secondary" name="botDisplayName" value="${config.botDisplayName || ''}" placeholder="أدخل اسم البوت الظاهر">
+                                <input type="text" class="form-control bg-dark text-white border-secondary" name="botDisplayName" value="${config.botDisplayName || ''}" placeholder="أدخل اسم البوت الظاهر بالداشبورد">
                             </div>
                             <div class="mb-3">
                                 <label class="form-label">لون تمييز الداشبورد والأزرار المخصصة</label>
@@ -569,28 +652,32 @@ app.get('/dashboard/settings', checkAuth, checkGuildAccess, (req, res) => {
         </form>
     </div>
     `;
-    res.send(renderDashboard(content, 'settings', req));
+    res.send(renderDashboard(content, 'settings', req, guildId));
 });
 
-// معالجة وحفظ الإعدادات العامة للبوت
-app.post('/dashboard/settings', checkAuth, checkGuildAccess, (req, res) => {
-    const config = readConfig();
+// حفظ إعدادات السيرفر المحدد
+app.post('/dashboard/:guildId/settings', checkAuth, checkGuildAccess, (req, res) => {
+    const guildId = req.params.guildId;
+    const config = getGuildConfig(guildId);
+    
     config.logsChannelId = req.body.logsChannelId;
     config.embedChannelId = req.body.embedChannelId;
     config.defaultCategoryId = req.body.defaultCategoryId;
     config.botDisplayName = req.body.botDisplayName;
     config.dashboardColor = req.body.dashboardColor;
     
-    writeConfig(config);
-    res.redirect('/dashboard/settings?success=true');
+    saveGuildConfig(guildId, config);
+    res.redirect(`/dashboard/${guildId}/settings?success=true`);
 });
 
-// صفحة تعديل وتخصيص Embed وبناء الأزرار (Embed & Buttons Builder)
-app.get('/dashboard/ticket-msg', checkAuth, checkGuildAccess, (req, res) => {
-    const config = readConfig();
+// صفحة تعديل وتخصيص Embed وبناء الأزرار للسيرفر المحدد
+app.get('/dashboard/:guildId/ticket-msg', checkAuth, checkGuildAccess, (req, res) => {
+    const guildId = req.params.guildId;
+    const config = getGuildConfig(guildId);
+    
     const success = req.query.success === 'true' ? `
         <div class="alert alert-success alert-dismissible fade show" role="alert">
-            تم تحديث الإعدادات وحفظها في config.json بنجاح.
+            تم حفظ إعدادات الرسالة والأزرار بنجاح.
             <button type="button" class="btn-close" data-bs-dismiss="alert" aria-label="Close"></button>
         </div>
     ` : '';
@@ -602,7 +689,6 @@ app.get('/dashboard/ticket-msg', checkAuth, checkGuildAccess, (req, res) => {
         </div>
     ` : '';
 
-    // بناء واجهات الإدخال للأزرار الخمسة بشكل تكراري ومنظم
     let buttonsHtml = '';
     for (let i = 0; i < 5; i++) {
         const btn = config.buttons && config.buttons[i] ? config.buttons[i] : {
@@ -612,7 +698,7 @@ app.get('/dashboard/ticket-msg', checkAuth, checkGuildAccess, (req, res) => {
         <div class="accordion-item bg-dark border-secondary text-white mb-3">
             <h2 class="accordion-header" id="headingBtn${i}">
                 <button class="accordion-button collapsed bg-secondary text-white" type="button" data-bs-toggle="collapse" data-bs-target="#collapseBtn${i}" aria-expanded="false" aria-controls="collapseBtn${i}">
-                    الزر رقم ${i+1}: ${btn.label || 'غير نشط (اترك الحقل فارغاً للإيقاف)'}
+                    الزر رقم ${i+1}: ${btn.label || 'غير نشط (اترك اسم الزر فارغاً للإيقاف)'}
                 </button>
             </h2>
             <div id="collapseBtn${i}" class="accordion-collapse collapse" aria-labelledby="headingBtn${i}" data-bs-parent="#buttonsAccordion">
@@ -640,11 +726,11 @@ app.get('/dashboard/ticket-msg', checkAuth, checkGuildAccess, (req, res) => {
                             <input type="text" class="form-control bg-dark text-white border-secondary" name="btn_${i}_ticketName" value="${btn.ticketName || 'ticket-{username}'}">
                         </div>
                         <div class="col-md-6 mb-3">
-                            <label class="form-label">رتبة المنشن والدعم (Role ID)</label>
+                            <label class="form-label">رتبة المنشن والدعم بالسيرفر (Role ID)</label>
                             <input type="text" class="form-control bg-dark text-white border-secondary" name="btn_${i}_mentionRole" value="${btn.mentionRole || ''}">
                         </div>
                         <div class="col-md-6 mb-3">
-                            <label class="form-label">كاتيجوري التكتات الخاصة بهذا الزر (اختياري)</label>
+                            <label class="form-label">تصنيف التكتات لهذا الزر (ID - اختياري)</label>
                             <input type="text" class="form-control bg-dark text-white border-secondary" name="btn_${i}_categoryId" value="${btn.categoryId || ''}">
                         </div>
                         <div class="col-12 mb-3">
@@ -662,13 +748,12 @@ app.get('/dashboard/ticket-msg', checkAuth, checkGuildAccess, (req, res) => {
 
     const content = `
     <div class="container-fluid">
-        <h2 class="h3 mb-4">تصميم لوحة رسائل التكت والأزرار التفاعلية</h2>
+        <h2 class="h3 mb-4">تصميم رسالة التكت والأزرار التفاعلية للسيرفر</h2>
         ${success}
         ${actionStatus}
 
-        <form id="ticketForm" method="POST" action="/dashboard/ticket-msg">
+        <form id="ticketForm" method="POST" action="/dashboard/${guildId}/ticket-msg">
             <div class="row">
-                <!-- لوحة التعديل والمدخلات -->
                 <div class="col-lg-7">
                     <div class="card card-custom">
                         <div class="card-header">تخصيص رسالة الـ Embed</div>
@@ -730,7 +815,7 @@ app.get('/dashboard/ticket-msg', checkAuth, checkGuildAccess, (req, res) => {
                                 <button type="submit" name="action" value="edit" class="btn btn-info text-white" ${!config.activeEmbedMessageId ? 'disabled' : ''}>تعديل الرسالة المفتوحة ✏️</button>
                                 <button type="submit" name="action" value="delete" class="btn btn-danger" ${!config.activeEmbedMessageId ? 'disabled' : ''}>حذف الرسالة الحالية 🗑️</button>
                             </div>
-                            ${config.activeEmbedMessageId ? `<p class="text-success mt-3 small">تم العثور على رسالة نشطة حالياً برقم معرف: ${config.activeEmbedMessageId}</p>` : `<p class="text-warning mt-3 small">لا توجد رسالة نشطة ومحفوظة حالياً.</p>`}
+                            ${config.activeEmbedMessageId ? `<p class="text-success mt-3 small">تم العثور على رسالة نشطة حالياً برقم معرف: ${config.activeEmbedMessageId}</p>` : `<p class="text-warning mt-3 small">لا توجد رسالة نشطة ومحفوظة حالياً لهذا السيرفر.</p>`}
                         </div>
                     </div>
                 </div>
@@ -747,7 +832,7 @@ app.get('/dashboard/ticket-msg', checkAuth, checkGuildAccess, (req, res) => {
                                     </div>
                                     <div class="discord-preview-title" id="previewTitle">العنوان الافتراضي</div>
                                     <img src="" class="discord-preview-thumbnail d-none" id="previewThumbnailImg">
-                                    <div class="discord-preview-desc" id="previewDesc">الوصف التعريفي للرسالة يظهر هنا...</div>
+                                    <div class="discord-preview-desc" id="previewDesc">الوصف التعريفي للرسالة يظهر هنا عند البدء في الكتابة...</div>
                                     <img src="" class="discord-preview-image d-none" id="previewImageImg">
                                     <div class="discord-preview-footer" id="previewFooterContainer">
                                         <span id="previewFooter"></span>
@@ -848,12 +933,13 @@ app.get('/dashboard/ticket-msg', checkAuth, checkGuildAccess, (req, res) => {
         refreshLivePreview();
     </script>
     `;
-    res.send(renderDashboard(content, 'ticket', req));
+    res.send(renderDashboard(content, 'ticket', req, guildId));
 });
 
-// استقبال وحفظ بيانات التكت والتحكم برسائل ديسكورد
-app.post('/dashboard/ticket-msg', checkAuth, checkGuildAccess, async (req, res) => {
-    const config = readConfig();
+// معالجة عمليات الإرسال والتحرير والحذف للسيرفر المحدد
+app.post('/dashboard/:guildId/ticket-msg', checkAuth, checkGuildAccess, async (req, res) => {
+    const guildId = req.params.guildId;
+    const config = getGuildConfig(guildId);
     const action = req.body.action;
 
     config.embed = {
@@ -880,7 +966,7 @@ app.post('/dashboard/ticket-msg', checkAuth, checkGuildAccess, async (req, res) 
         });
     }
 
-    writeConfig(config);
+    saveGuildConfig(guildId, config);
 
     let redirectStatus = '';
     try {
@@ -888,42 +974,41 @@ app.post('/dashboard/ticket-msg', checkAuth, checkGuildAccess, async (req, res) 
             if (!config.embedChannelId) {
                 redirectStatus = encodeURIComponent('حدث خطأ: يرجى تحديد قناة إرسال التكت أولاً في لوحة الإعدادات.');
             } else {
-                await sendTicketEmbed(config.embedChannelId);
-                redirectStatus = encodeURIComponent('تم إرسال اللوحة الجديدة بنجاح ونشرها بالديسكورد.');
-                logEvent('embed_send', { user: req.user, channel: `<#${config.embedChannelId}>` });
+                await sendTicketEmbed(guildId, config.embedChannelId);
+                redirectStatus = encodeURIComponent('تم إرسال اللوحة الجديدة بنجاح ونشرها بالسيرفر ديسكورد.');
+                logEvent('embed_send', guildId, { user: req.user, channel: `<#${config.embedChannelId}>` });
             }
         } else if (action === 'edit') {
             if (!config.activeEmbedMessageId) {
                 redirectStatus = encodeURIComponent('حدث خطأ: لا توجد رسالة نشطة لتعديلها.');
             } else {
-                await editTicketEmbed();
-                redirectStatus = encodeURIComponent('تم تعديل الرسالة النشطة حالياً وتحديثها.');
-                logEvent('embed_edit', { user: req.user });
+                await editTicketEmbed(guildId);
+                redirectStatus = encodeURIComponent('تم تعديل الرسالة النشطة وتحديثها بنجاح بالسيرفر.');
+                logEvent('embed_edit', guildId, { user: req.user });
             }
         } else if (action === 'delete') {
             if (!config.activeEmbedMessageId) {
                 redirectStatus = encodeURIComponent('حدث خطأ: لا توجد رسالة نشطة لحذفها.');
             } else {
-                await deleteTicketEmbed();
-                redirectStatus = encodeURIComponent('تم حذف رسالة التكت بنجاح من الديسكورد.');
-                logEvent('embed_delete', { user: req.user });
+                await deleteTicketEmbed(guildId);
+                redirectStatus = encodeURIComponent('تم حذف رسالة التكت بنجاح من السيرفر ديسكورد.');
+                logEvent('embed_delete', guildId, { user: req.user });
             }
         } else {
-            redirectStatus = encodeURIComponent('تم حفظ التغييرات والبيانات بنجاح بدون إرسال للديسكورد.');
+            redirectStatus = encodeURIComponent('تم حفظ التغييرات والبيانات في الملف بنجاح بدون اتخاذ إجراء.');
         }
     } catch (err) {
         console.error(err);
         redirectStatus = encodeURIComponent('حدث خطأ فني أثناء التعامل مع ديسكورد: ' + err.message);
     }
 
-    res.redirect(`/dashboard/ticket-msg?success=true&actionStatus=${redirectStatus}`);
+    res.redirect(`/dashboard/${guildId}/ticket-msg?success=true&actionStatus=${redirectStatus}`);
 });
 
-// ==================== وظائف البوت المباشرة (Discord Bot Functions) ====================
+// ==================== وظائف البوت المباشرة لعدة سيرفرات ====================
 
-// دالة لبناء وإرسال Embed التكتات
-async function sendTicketEmbed(channelId) {
-    const config = readConfig();
+async function sendTicketEmbed(guildId, channelId) {
+    const config = getGuildConfig(guildId);
     const channel = client.channels.cache.get(channelId);
     if (!channel) throw new Error("قناة الإرسال غير متوفرة أو لم يتم العثور عليها بالخادم.");
 
@@ -970,13 +1055,12 @@ async function sendTicketEmbed(channelId) {
     const msg = await channel.send({ embeds: [embed], components: rows });
     config.activeEmbedMessageId = msg.id;
     config.embedChannelId = channelId;
-    writeConfig(config);
+    saveGuildConfig(guildId, config);
     return msg;
 }
 
-// تعديل رسالة Embed التكتات الحالية
-async function editTicketEmbed() {
-    const config = readConfig();
+async function editTicketEmbed(guildId) {
+    const config = getGuildConfig(guildId);
     const channel = client.channels.cache.get(config.embedChannelId);
     if (!channel) throw new Error("لم يتم العثور على القناة المحددة للرسالة.");
     const msg = await channel.messages.fetch(config.activeEmbedMessageId);
@@ -1025,9 +1109,8 @@ async function editTicketEmbed() {
     await msg.edit({ embeds: [embed], components: rows });
 }
 
-// حذف رسالة التكت الحالية من ديسكورد
-async function deleteTicketEmbed() {
-    const config = readConfig();
+async function deleteTicketEmbed(guildId) {
+    const config = getGuildConfig(guildId);
     const channel = client.channels.cache.get(config.embedChannelId);
     if (channel && config.activeEmbedMessageId) {
         try {
@@ -1038,25 +1121,26 @@ async function deleteTicketEmbed() {
         }
     }
     config.activeEmbedMessageId = "";
-    writeConfig(config);
+    saveGuildConfig(guildId, config);
 }
 
-// ==================== تفاعل الأزرار والمودالات داخل الديسكورد ====================
+// ==================== تفاعل الأزرار والمودالات داخل الديسكورد لكل سيرفر ====================
 
 client.on('interactionCreate', async interaction => {
-    const config = readConfig();
+    if (!interaction.guild) return;
+    const guildId = interaction.guild.id;
+    const config = getGuildConfig(guildId); // جلب الإعدادات الخاصة بهذا السيرفر فقط
 
     if (interaction.isButton()) {
         const customId = interaction.customId;
 
-        // عند قيام العضو بالنقر على أحد أزرار فتح التكت
         if (customId.startsWith('open_ticket_')) {
             await interaction.deferReply({ ephemeral: true });
             const btnIndex = parseInt(customId.replace('open_ticket_', ''));
             const btnConfig = config.buttons[btnIndex];
             
             if (!btnConfig) {
-                return interaction.editReply({ content: "خطأ: لم يتم العثور على إعدادات هذا الزر بالملفات." });
+                return interaction.editReply({ content: "خطأ: لم يتم العثور على إعدادات هذا الزر بالسيرفر الحالي." });
             }
 
             const guild = interaction.guild;
@@ -1065,13 +1149,12 @@ client.on('interactionCreate', async interaction => {
                 .replace('{username}', cleanUsername)
                 .toLowerCase();
 
-            // منع العضو من إنشاء تكت تكراري وفتح أكثر من واحدة لنفس الفئة
+            // فحص وجود تكت مكرر للعضو
             const duplicateChannel = guild.channels.cache.find(c => c.name === expectedName);
             if (duplicateChannel) {
-                return interaction.editReply({ content: `لديك تكت مفتوح وموجود بالفعل داخل السيرفر: <#${duplicateChannel.id}>` });
+                return interaction.editReply({ content: `لديك تكت مفتوح وموجود بالفعل داخل هذا السيرفر: <#${duplicateChannel.id}>` });
             }
 
-            // إعداد الصلاحيات للتكت الجديد
             const parentId = btnConfig.categoryId || config.defaultCategoryId || null;
             const permissionOverwrites = [
                 {
@@ -1089,7 +1172,6 @@ client.on('interactionCreate', async interaction => {
                 }
             ];
 
-            // إضافة منشن وصلاحيات للرتبة المسؤولة إن وجدت
             if (btnConfig.mentionRole) {
                 permissionOverwrites.push({
                     id: btnConfig.mentionRole,
@@ -1110,14 +1192,12 @@ client.on('interactionCreate', async interaction => {
                     permissionOverwrites: permissionOverwrites
                 });
 
-                // تسجيل الحدث بسيرفر اللوق
-                logEvent('open', {
+                logEvent('open', guildId, {
                     user: interaction.user,
                     channel: ticketChannel,
                     buttonLabel: btnConfig.label
                 });
 
-                // إرسال رسالة الترحيب والتحكم داخل التكت
                 const welcome = (btnConfig.welcomeMessage || "مرحباً {user}").replace('{user}', `<@${interaction.user.id}>`);
                 const roleMention = btnConfig.mentionRole ? `<@&${btnConfig.mentionRole}>` : '';
 
@@ -1129,7 +1209,7 @@ client.on('interactionCreate', async interaction => {
 
                 const row1 = new ActionRowBuilder().addComponents(
                     new ButtonBuilder().setCustomId('ticket_close').setLabel('إغلاق 🔒').setStyle(ButtonStyle.Danger),
-                    new ButtonBuilder().setCustomId('ticket_claim').setLabel('استلام 🔑').setStyle(ButtonStyle.Success),
+                    new ButtonBuilder().setCustomId('ticket_claim').setLabel('استلاف 🔑').setStyle(ButtonStyle.Success),
                     new ButtonBuilder().setCustomId('ticket_rename').setLabel('تغيير الاسم ✏️').setStyle(ButtonStyle.Secondary)
                 );
                 const row2 = new ActionRowBuilder().addComponents(
@@ -1147,11 +1227,10 @@ client.on('interactionCreate', async interaction => {
                 await interaction.editReply({ content: `تم إنشاء تكت المساعدة بنجاح: <#${ticketChannel.id}>` });
             } catch (err) {
                 console.error(err);
-                await interaction.editReply({ content: "تعذر إنشاء التكت بسبب نقص صلاحيات البوت الإدارية بالديسكورد." });
+                await interaction.editReply({ content: "تعذر إنشاء التكت بسبب نقص صلاحيات البوت الإدارية بالسيرفر." });
             }
         }
 
-        // إغلاق التكت
         if (customId === 'ticket_close') {
             const confirmRow = new ActionRowBuilder().addComponents(
                 new ButtonBuilder().setCustomId('ticket_close_confirm').setLabel('تأكيد الإغلاق الفوري 🔒').setStyle(ButtonStyle.Danger),
@@ -1169,7 +1248,6 @@ client.on('interactionCreate', async interaction => {
             const channel = interaction.channel;
             const guild = interaction.guild;
 
-            // بناء وحفظ الأرشيف
             const transcriptHtml = await generateTranscript(channel);
             const logsChannelId = config.logsChannelId;
 
@@ -1184,7 +1262,7 @@ client.on('interactionCreate', async interaction => {
                             name: `${channel.name}-transcript.html`
                         }]
                     });
-                    logEvent('close', { user: interaction.user, channel: channel });
+                    logEvent('close', guildId, { user: interaction.user, channel: channel });
                 }
             }
 
@@ -1193,12 +1271,10 @@ client.on('interactionCreate', async interaction => {
             }, 5000);
         }
 
-        // استلام التكت (Claim)
         if (customId === 'ticket_claim') {
             const channel = interaction.channel;
             const member = interaction.member;
 
-            // التحقق من أن العضو يمتلك صلاحية إدارة القنوات أو رتبة الدعم
             if (!member.permissions.has(PermissionFlagsBits.ManageChannels)) {
                 return interaction.reply({ content: "عذراً، ليست لديك الصلاحيات الكافية لاستلام هذا التكت.", ephemeral: true });
             }
@@ -1210,10 +1286,9 @@ client.on('interactionCreate', async interaction => {
             });
 
             await interaction.reply({ content: `🔑 تم استلام ومتابعة التكت بواسطة المشرف المسؤول: ${interaction.user}` });
-            logEvent('claim', { user: interaction.user, channel: channel });
+            logEvent('claim', guildId, { user: interaction.user, channel: channel });
         }
 
-        // إعادة تسمية الروم
         if (customId === 'ticket_rename') {
             const modal = new ModalBuilder().setCustomId('modal_rename').setTitle('إعادة تسمية التكت');
             const nameInp = new TextInputBuilder()
@@ -1227,7 +1302,6 @@ client.on('interactionCreate', async interaction => {
             await interaction.showModal(modal);
         }
 
-        // إضافة عضو للتكت
         if (customId === 'ticket_add_member') {
             const modal = new ModalBuilder().setCustomId('modal_add_member').setTitle('إضافة عضو للتكت');
             const userInp = new TextInputBuilder()
@@ -1241,7 +1315,6 @@ client.on('interactionCreate', async interaction => {
             await interaction.showModal(modal);
         }
 
-        // إزالة عضو من التكت
         if (customId === 'ticket_remove_member') {
             const modal = new ModalBuilder().setCustomId('modal_remove_member').setTitle('إزالة عضو من التكت');
             const userInp = new TextInputBuilder()
@@ -1255,7 +1328,6 @@ client.on('interactionCreate', async interaction => {
             await interaction.showModal(modal);
         }
 
-        // إنشاء أرشيف فوري محلياً داخل التكت
         if (customId === 'ticket_transcript') {
             await interaction.reply({ content: 'جاري إنشاء الأرشيف الفوري...' });
             const html = await generateTranscript(interaction.channel);
@@ -1270,7 +1342,6 @@ client.on('interactionCreate', async interaction => {
         }
     }
 
-    // استقبال مدخلات المودالات (Modals Submit)
     if (interaction.isModalSubmit()) {
         const customId = interaction.customId;
 
@@ -1278,7 +1349,7 @@ client.on('interactionCreate', async interaction => {
             const newName = interaction.fields.getTextInputValue('new_name').toLowerCase().replace(/\s+/g, '-');
             await interaction.reply({ content: `جاري إعادة تسمية الروم إلى \`${newName}\`...` });
             await interaction.channel.setName(newName);
-            logEvent('rename', { user: interaction.user, channel: interaction.channel, details: newName });
+            logEvent('rename', guildId, { user: interaction.user, channel: interaction.channel, details: newName });
         }
 
         if (customId === 'modal_add_member') {
@@ -1295,7 +1366,7 @@ client.on('interactionCreate', async interaction => {
                 });
 
                 await interaction.reply({ content: `تمت إضافة العضو ${targetMember} بنجاح إلى التكت وتفعيل صلاحيات المشاهدة.` });
-                logEvent('add_member', { user: interaction.user, channel: interaction.channel, details: targetMember.user });
+                logEvent('add_member', guildId, { user: interaction.user, channel: interaction.channel, details: targetMember.user });
             } catch (err) {
                 await interaction.reply({ content: 'عذراً، تعذر العثور على العضو داخل السيرفر بالمعرف المدخل.', ephemeral: true });
             }
@@ -1310,7 +1381,7 @@ client.on('interactionCreate', async interaction => {
                 await interaction.channel.permissionOverwrites.delete(targetMember.id);
 
                 await interaction.reply({ content: `تمت إزالة العضو ${targetMember} بنجاح من التكت الفني الحالي.` });
-                logEvent('remove_member', { user: interaction.user, channel: interaction.channel, details: targetMember.user });
+                logEvent('remove_member', guildId, { user: interaction.user, channel: interaction.channel, details: targetMember.user });
             } catch (err) {
                 await interaction.reply({ content: 'عذراً، تعذر العثور على العضو داخل السيرفر بالمعرف المدخل.', ephemeral: true });
             }
@@ -1318,10 +1389,10 @@ client.on('interactionCreate', async interaction => {
     }
 });
 
-// دالة لتسجيل وبث الأحداث واللوق إلى القناة المخصصة بالديسكورد
-function logEvent(type, data) {
-    const config = readConfig();
-    const guild = client.guilds.cache.get(process.env.GUILD_ID);
+// دالة لتسجيل الأحداث واللوق لسيرفر محدد
+function logEvent(type, guildId, data) {
+    const config = getGuildConfig(guildId);
+    const guild = client.guilds.cache.get(guildId);
     if (!guild) return;
     const logChannel = guild.channels.cache.get(config.logsChannelId);
     if (!logChannel) return;
@@ -1372,7 +1443,6 @@ function logEvent(type, data) {
     logChannel.send({ embeds: [embed] }).catch(() => {});
 }
 
-// دالة لتوليد وحياكة ملف الأرشيف Transcript بصيغة HTML متكاملة واحترافية
 async function generateTranscript(channel) {
     const messages = await channel.messages.fetch({ limit: 100 });
     const sortedMsgs = Array.from(messages.values()).reverse();
@@ -1449,15 +1519,15 @@ async function generateTranscript(channel) {
     `;
 }
 
-// تشغيل وربط خوادم البوت والويب معاً (Express Server & Bot Ready)
+// تشغيل وربط خوادم البوت والويب معاً
 client.once('ready', () => {
-    console.log(`Bot has logged in successfully as: ${client.user.tag}`);
+    console.log(`Bot logged in as: ${client.user.tag} (Multi-Guild Enabled)`);
 });
 
 client.login(process.env.DISCORD_TOKEN).catch(err => {
-    console.error("فشل تسجيل دخول البوت لديسكورد، يرجى مراجعة Token البوت المرفق:", err.message);
+    console.error("Failed to login to Discord: ", err.message);
 });
 
 app.listen(PORT, () => {
-    console.log(`Web Dashboard server is up and listening on port ${PORT}`);
+    console.log(`Web Dashboard is running on port ${PORT}`);
 });
