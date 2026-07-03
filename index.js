@@ -24,7 +24,7 @@ const client = new Client({
     GatewayIntentBits.GuildMessages,
     GatewayIntentBits.MessageContent,
     GatewayIntentBits.GuildMessageReactions,
-    GatewayIntentBits.GuildPresences // مطلوب لمعرفة حالات اتصال الأعضاء في البث الجماعي
+    GatewayIntentBits.GuildPresences
   ],
   partials: [Partials.Channel, Partials.Message, Partials.User, Partials.Reaction]
 });
@@ -69,7 +69,7 @@ async function sendLog(guild, embed) {
   }
 }
 
-// مؤقت لفحص وإنهاء القيف أواي التلقائي (كل 15 ثانية)
+// فحص القيف أواي التلقائي والجدولة
 setInterval(async () => {
   const now = Date.now();
   for (const guildId in client.config.guilds) {
@@ -86,7 +86,7 @@ setInterval(async () => {
   }
 }, 15000);
 
-// دالة إنهاء القيف أواي واختيار الفائزين بناء على المتطلبات
+// دالة إنهاء القيف أواي واختيار الفائزين
 async function endGiveaway(client, guild, giveaway) {
   giveaway.ended = true;
   client.saveConfig();
@@ -161,7 +161,7 @@ async function endGiveaway(client, guild, giveaway) {
   }
 }
 
-// فعاليات انضمام الأعضاء (Welcome & Auto Role)
+// فعاليات انضمام الأعضاء والترحيب بالرسم على البطاقات
 client.on('guildMemberAdd', async (member) => {
   const guildConfig = client.config.guilds[member.guild.id];
   if (!guildConfig) return;
@@ -242,7 +242,7 @@ client.on('guildMemberAdd', async (member) => {
   }
 });
 
-// الردود التلقائية
+// مستمع الردود التلقائية
 client.on('messageCreate', async (message) => {
   if (message.author.bot || !message.guild) return;
 
@@ -262,7 +262,7 @@ client.on('messageCreate', async (message) => {
   }
 });
 
-// السجلات (Message Logs)
+// سجل حذف الرسائل وتحديثها
 client.on('messageDelete', async (message) => {
   if (!message.guild || message.author?.bot) return;
   const embed = new EmbedBuilder()
@@ -292,7 +292,7 @@ client.on('messageUpdate', async (oldMessage, newMessage) => {
   sendLog(oldMessage.guild, embed);
 });
 
-// التعامل مع تفاعلات الأزرار، المودال، وأوامر السلاش
+// إدارة الأزرار الملكية والمودال التفاعلية داخل التكت
 client.on('interactionCreate', async (interaction) => {
   if (!interaction.guild) return;
   const guildConfig = client.config.guilds[interaction.guild.id];
