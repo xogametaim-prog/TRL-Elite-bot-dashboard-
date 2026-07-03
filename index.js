@@ -442,11 +442,11 @@ client.on('interactionCreate', async (interaction) => {
       const row1 = new ActionRowBuilder().addComponents(
         new ButtonBuilder().setCustomId('ticket_claim').setLabel('Claim').setEmoji('🎫').setStyle(ButtonStyle.Success),
         new ButtonBuilder().setCustomId('ticket_close_confirm').setLabel('Close').setEmoji('🔒').setStyle(ButtonStyle.Danger),
-        new ButtonBuilder().setCustomId('ticket_add_member_btn').setLabel('Add').setEmoji('➕').setStyle(ButtonStyle.Primary)
+        new ButtonBuilder().setCustomId('ticket_add_member_btn').setLabel('Add Member').setEmoji('➕').setStyle(ButtonStyle.Primary)
       );
 
       const row2 = new ActionRowBuilder().addComponents(
-        new ButtonBuilder().setCustomId('ticket_remove_member_btn').setLabel('Remove').setEmoji('➖').setStyle(ButtonStyle.Secondary),
+        new ButtonBuilder().setCustomId('ticket_remove_member_btn').setLabel('Remove Member').setEmoji('➖').setStyle(ButtonStyle.Secondary),
         new ButtonBuilder().setCustomId('ticket_rename_btn').setLabel('Rename').setEmoji('✏️').setStyle(ButtonStyle.Secondary)
       );
 
@@ -464,6 +464,7 @@ client.on('interactionCreate', async (interaction) => {
       sendLog(interaction.guild, logEmbed);
     }
 
+    // زر Claim التفاعلي
     if (customId === 'ticket_claim') {
       const topic = interaction.channel.topic || '';
       if (topic.includes('claimed:')) {
@@ -476,7 +477,7 @@ client.on('interactionCreate', async (interaction) => {
 
       const logEmbed = new EmbedBuilder()
         .setTitle("🎫 تكت مستلم")
-        .setColor('#d4af37')
+        .setColor('#6366f1')
         .addFields(
           { name: "التكت:", value: `<#${interaction.channel.id}>` },
           { name: "المنفذ:", value: `<@${interaction.user.id}>` }
@@ -484,6 +485,7 @@ client.on('interactionCreate', async (interaction) => {
       sendLog(interaction.guild, logEmbed);
     }
 
+    // زر إضافة عضو (فتح المودال)
     if (customId === 'ticket_add_member_btn') {
       const modal = new ModalBuilder().setCustomId('modal_add_member').setTitle('إضافة عضو للتكت');
       const input = new TextInputBuilder()
@@ -496,6 +498,7 @@ client.on('interactionCreate', async (interaction) => {
       await interaction.showModal(modal);
     }
 
+    // زر إزالة عضو (فتح المودال)
     if (customId === 'ticket_remove_member_btn') {
       const modal = new ModalBuilder().setCustomId('modal_remove_member').setTitle('إزالة عضو من التكت');
       const input = new TextInputBuilder()
@@ -508,6 +511,7 @@ client.on('interactionCreate', async (interaction) => {
       await interaction.showModal(modal);
     }
 
+    // زر إعادة تسمية التكت (فتح المودال)
     if (customId === 'ticket_rename_btn') {
       const modal = new ModalBuilder().setCustomId('modal_rename').setTitle('إعادة تسمية التكت');
       const input = new TextInputBuilder()
@@ -520,6 +524,7 @@ client.on('interactionCreate', async (interaction) => {
       await interaction.showModal(modal);
     }
 
+    // تأكيد إغلاق التكت
     if (customId === 'ticket_close_confirm') {
       const row = new ActionRowBuilder().addComponents(
         new ButtonBuilder().setCustomId('ticket_close_yes').setLabel('تأكيد الإغلاق').setStyle(ButtonStyle.Danger),
@@ -532,6 +537,7 @@ client.on('interactionCreate', async (interaction) => {
       await interaction.message.delete().catch(() => {});
     }
 
+    // تنفيذ الإغلاق وبناء الترانسكريبت
     if (customId === 'ticket_close_yes') {
       await interaction.reply({ content: '⏳ جاري تصدير أرشيف التكت وإغلاق الروم...' });
 
