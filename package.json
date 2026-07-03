@@ -1,7 +1,7 @@
 {
-  "name": "pro-ticket-bot-v1",
+  "name": "discord-ticket-bot-dashboard",
   "version": "1.0.0",
-  "description": "Professional Discord Ticket Bot with SaaS Glassmorphism Dashboard",
+  "description": "Discord Ticket Bot with Premium Web Dashboard",
   "main": "index.js",
   "scripts": {
     "start": "node index.js"
@@ -10,10 +10,7 @@
     "discord.js": "^14.14.1",
     "express": "^4.18.2",
     "express-session": "^1.18.0",
-    "passport": "^0.7.0",
-    "passport-discord": "^0.1.4"
-  },
-  "engines": {
-    "node": ">=16.9.0"
+    "axios": "^1.6.8",
+    "@napi-rs/canvas": "^0.1.52"
   }
 }
