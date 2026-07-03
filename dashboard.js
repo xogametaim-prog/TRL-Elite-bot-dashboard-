@@ -6,11 +6,16 @@ const { ChannelType, EmbedBuilder, ActionRowBuilder, ButtonBuilder, ButtonStyle 
 
 const app = express();
 
+// تفعيل ميزة الجلسات الدائمة لتفادي تسجيل الدخول والتحقق المتكرر (تحفظ الجلسة لمدة 7 أيام)
 app.use(session({
-  secret: process.env.SESSION_SECRET || 'secret-dashboard-key-123',
+  secret: process.env.SESSION_SECRET || 'secret-dashboard-key-gold-123',
   resave: false,
-  saveUninitialized: false
+  saveUninitialized: false,
+  cookie: {
+    maxAge: 7 * 24 * 60 * 60 * 1000 // 7 أيام بالملي ثانية
+  }
 }));
+
 app.use(express.urlencoded({ extended: true }));
 app.use(express.json());
 
@@ -33,7 +38,11 @@ function startDashboard(client) {
     res.redirect('/login');
   }
 
+  // إذا كان العضو متحققاً بالفعل، فإنه يدخل اللوحة فوراً دون مصادقة مكررة
   app.get('/login', (req, res) => {
+    if (req.session.user) {
+      return res.redirect('/dashboard');
+    }
     const redirectUri = encodeURIComponent(process.env.CALLBACK_URL);
     const discordAuthUrl = `https://discord.com/api/oauth2/authorize?client_id=${process.env.CLIENT_ID}&redirect_uri=${redirectUri}&response_type=code&scope=identify%20guilds`;
     res.redirect(discordAuthUrl);
@@ -80,30 +89,34 @@ function startDashboard(client) {
   });
 
   app.get('/', (req, res) => {
+    const loginButton = req.session.user 
+      ? `<a href="/dashboard" class="px-8 py-3 rounded-full btn-gold text-black font-bold transition shadow-lg inline-block">الدخول للوحة التحكم</a>`
+      : `<a href="/login" class="px-8 py-3 rounded-full btn-gold text-black font-bold transition shadow-lg inline-block">سجل دخولك الآن عبر Discord</a>`;
+
     res.send(renderBaseHtml("الرئيسية", `
-      <div class="text-center py-20">
-        <h1 class="text-5xl font-black mb-6 glow">لوحة تحكم البوت الاحترافية</h1>
-        <p class="text-slate-400 max-w-xl mx-auto mb-8">قم بإدارة وإعداد نظام التكتات والترحيب والردود التلقائية لسيرفرات الديسكورد الخاصة بك بواجهة فائقة السرعة والجمال.</p>
-        <a href="/login" class="px-8 py-3 rounded-full bg-indigo-600 hover:bg-indigo-700 text-white font-bold transition shadow-lg shadow-indigo-600/30">سجل دخولك الآن عبر Discord</a>
+      <div class="text-center py-24">
+        <h1 class="text-6xl font-black mb-6 glow-text tracking-wide">لوحة التحكم الفاخرة للديسكورد</h1>
+        <p class="text-slate-400 max-w-xl mx-auto mb-10 text-lg leading-relaxed">أدر أنظمتك بمفهوم تصميمي ذهبي ملكي متطور يدعم البث الإذاعي وتكامل التذاكر الفوري دون انقطاع.</p>
+        ${loginButton}
       </div>
-    `, null));
+    `, req.session.user));
   });
 
   app.get('/dashboard', checkAuth, (req, res) => {
     const adminGuilds = req.session.guilds.filter(g => (g.permissions & 0x8) === 0x8 || (g.permissions & 0x20) === 0x20);
 
-    let guildsHtml = `<div class="grid grid-cols-1 md:grid-cols-3 gap-6 mt-8">`;
+    let guildsHtml = `<div class="grid grid-cols-1 md:grid-cols-3 gap-8 mt-8">`;
     adminGuilds.forEach(g => {
       const isBotIn = client.guilds.cache.has(g.id);
       const guildIcon = g.icon ? `https://cdn.discordapp.com/icons/${g.id}/${g.icon}.png` : 'https://cdn.discordapp.com/embed/avatars/0.png';
       guildsHtml += `
-        <div class="glass p-6 rounded-2xl flex flex-col items-center justify-between text-center border border-slate-800 card-glow transition">
-          <img src="${guildIcon}" class="w-20 h-20 rounded-full mb-4 ring-4 ring-indigo-500/20" />
-          <h3 class="font-bold text-xl mb-4 text-white">${g.name}</h3>
+        <div class="glass p-8 rounded-3xl flex flex-col items-center justify-between text-center card-glow transition">
+          <img src="${guildIcon}" class="w-24 h-24 rounded-full mb-6 ring-4 ring-amber-500/25" />
+          <h3 class="font-black text-2xl mb-6 text-white">${g.name}</h3>
           ${isBotIn ? `
-            <a href="/dashboard/${g.id}" class="px-6 py-2 rounded-lg bg-indigo-600 hover:bg-indigo-700 text-white font-medium transition w-full">تعديل الإعدادات</a>
+            <a href="/dashboard/${g.id}" class="px-6 py-3 rounded-full btn-gold text-black font-bold transition w-full text-center">تعديل الإعدادات</a>
           ` : `
-            <a href="https://discord.com/api/oauth2/authorize?client_id=${process.env.CLIENT_ID}&permissions=8&scope=bot%20applications.commands&guild_id=${g.id}" target="_blank" class="px-6 py-2 rounded-lg bg-emerald-600 hover:bg-emerald-700 text-white font-medium transition w-full">دعوة البوت</a>
+            <a href="https://discord.com/api/oauth2/authorize?client_id=${process.env.CLIENT_ID}&permissions=8&scope=bot%20applications.commands&guild_id=${g.id}" target="_blank" class="px-6 py-3 rounded-full border border-amber-500/50 hover:bg-amber-500/10 text-amber-400 font-bold transition w-full text-center">دعوة البوت الملكي</a>
           `}
         </div>
       `;
@@ -111,8 +124,8 @@ function startDashboard(client) {
     guildsHtml += `</div>`;
 
     res.send(renderBaseHtml("سيرفراتك", `
-      <h2 class="text-3xl font-bold mb-2">اختر السيرفر</h2>
-      <p class="text-slate-400">اختر السيرفر الذي ترغب بتعديل لوحته وإعداداته.</p>
+      <h2 class="text-4xl font-black mb-2 glow-text">اختر السيرفر المستهدف</h2>
+      <p class="text-slate-400">ابدأ في إدارة محتواك الرقمي بأسلوب مميز وسلس.</p>
       ${guildsHtml}
     `, req.session.user));
   });
@@ -130,39 +143,39 @@ function startDashboard(client) {
     const transChannelOptions = getSelectOptions(channels, ChannelType.GuildText, config.general?.transcriptChannel);
 
     const content = `
-      <h2 class="text-2xl font-bold mb-6">⚙️ الإعدادات العامة للمشروع</h2>
+      <h2 class="text-3xl font-black mb-6 text-white border-b border-amber-500/20 pb-4">⚙️ الإعدادات العامة للمشروع</h2>
       <form action="/dashboard/${guild.id}/save-general" method="POST" class="space-y-6">
         <div class="grid grid-cols-1 md:grid-cols-2 gap-6">
           <div>
-            <label class="block mb-2 text-slate-400">اسم البوت باللوحة</label>
-            <input type="text" name="botName" value="${config.general?.botName || client.user.username}" class="w-full bg-slate-900/50 border border-slate-700 rounded-lg p-3 text-white focus:outline-none focus:border-indigo-500" />
+            <label class="block mb-2 text-slate-400 font-semibold">اسم البوت باللوحة</label>
+            <input type="text" name="botName" value="${config.general?.botName || client.user.username}" class="w-full bg-black/60 border border-slate-800 focus:border-amber-500 rounded-xl p-3 text-white focus:outline-none transition" />
           </div>
           <div>
-            <label class="block mb-2 text-slate-400">شعار البوت باللوحة (URL)</label>
-            <input type="text" name="botLogo" value="${config.general?.botLogo || client.user.displayAvatarURL()}" class="w-full bg-slate-900/50 border border-slate-700 rounded-lg p-3 text-white focus:outline-none focus:border-indigo-500" />
+            <label class="block mb-2 text-slate-400 font-semibold">شعار البوت الملكي (URL)</label>
+            <input type="text" name="botLogo" value="${config.general?.botLogo || client.user.displayAvatarURL()}" class="w-full bg-black/60 border border-slate-800 focus:border-amber-500 rounded-xl p-3 text-white focus:outline-none transition" />
           </div>
         </div>
         <div class="grid grid-cols-1 md:grid-cols-2 gap-6">
           <div>
-            <label class="block mb-2 text-slate-400">روم السجلات واللوق (Ticket Logs)</label>
-            <select name="logsChannel" class="w-full bg-slate-900/50 border border-slate-700 rounded-lg p-3 text-white focus:outline-none focus:border-indigo-500">${logChannelOptions}</select>
+            <label class="block mb-2 text-slate-400 font-semibold">روم السجلات واللوق (Ticket Logs)</label>
+            <select name="logsChannel" class="w-full bg-black/60 border border-slate-800 focus:border-amber-500 rounded-xl p-3 text-white focus:outline-none transition">${logChannelOptions}</select>
           </div>
           <div>
-            <label class="block mb-2 text-slate-400">روم حفظ الترانسكريبت (Transcript Channel)</label>
-            <select name="transcriptChannel" class="w-full bg-slate-900/50 border border-slate-700 rounded-lg p-3 text-white focus:outline-none focus:border-indigo-500">${transChannelOptions}</select>
+            <label class="block mb-2 text-slate-400 font-semibold">روم حفظ الأرشيف (Transcript Channel)</label>
+            <select name="transcriptChannel" class="w-full bg-black/60 border border-slate-800 focus:border-amber-500 rounded-xl p-3 text-white focus:outline-none transition">${transChannelOptions}</select>
           </div>
         </div>
         <div class="grid grid-cols-1 md:grid-cols-2 gap-6">
           <div>
-            <label class="block mb-2 text-slate-400">الروم الافتراضي لإرسال بنل التكت</label>
-            <select name="ticketChannel" class="w-full bg-slate-900/50 border border-slate-700 rounded-lg p-3 text-white focus:outline-none focus:border-indigo-500">${ticketChannelOptions}</select>
+            <label class="block mb-2 text-slate-400 font-semibold">الروم الافتراضي لإرسال بنل التكت</label>
+            <select name="ticketChannel" class="w-full bg-black/60 border border-slate-800 focus:border-amber-500 rounded-xl p-3 text-white focus:outline-none transition">${ticketChannelOptions}</select>
           </div>
           <div>
-            <label class="block mb-2 text-slate-400">الكاتيجوري الافتراضي للتكتات</label>
-            <select name="defaultCategory" class="w-full bg-slate-900/50 border border-slate-700 rounded-lg p-3 text-white focus:outline-none focus:border-indigo-500">${categoryOptions}</select>
+            <label class="block mb-2 text-slate-400 font-semibold">الكاتيجوري الافتراضي للتكتات</label>
+            <select name="defaultCategory" class="w-full bg-black/60 border border-slate-800 focus:border-amber-500 rounded-xl p-3 text-white focus:outline-none transition">${categoryOptions}</select>
           </div>
         </div>
-        <button type="submit" class="px-8 py-3 rounded-lg bg-indigo-600 hover:bg-indigo-700 text-white font-bold transition">حفظ التغييرات</button>
+        <button type="submit" class="px-8 py-3 rounded-full btn-gold text-black font-black transition shadow-lg">حفظ التغييرات</button>
       </form>
     `;
 
@@ -190,22 +203,22 @@ function startDashboard(client) {
       ticketsHtml += `
         <div class="glass p-6 rounded-2xl border border-slate-800 space-y-4 mb-6 ticket-card">
           <div class="flex justify-between items-center">
-            <h4 class="font-bold text-lg text-indigo-400 card-title">تذكرة: ${ticket.name}</h4>
+            <h4 class="font-bold text-lg text-amber-400 card-title">تذكرة: ${ticket.name}</h4>
             <button type="button" onclick="this.closest('.ticket-card').remove();" class="text-red-500 hover:text-red-400 transition font-medium text-sm"><i class="fa-solid fa-trash"></i> إزالة</button>
           </div>
           <input type="hidden" name="id" value="${ticket.id || 'ticket_' + Date.now() + '_' + idx}" />
           <div class="grid grid-cols-1 md:grid-cols-4 gap-4">
             <div>
               <label class="block text-xs text-slate-400 mb-1">اسم الزر</label>
-              <input type="text" name="name" value="${ticket.name}" class="w-full bg-slate-900/50 border border-slate-700 rounded-lg p-2 text-white" required />
+              <input type="text" name="name" value="${ticket.name}" class="w-full bg-black/60 border border-slate-800 focus:border-amber-500 rounded-lg p-2 text-white" required />
             </div>
             <div>
               <label class="block text-xs text-slate-400 mb-1">Emoji</label>
-              <input type="text" name="emoji" value="${ticket.emoji || '📩'}" class="w-full bg-slate-900/50 border border-slate-700 rounded-lg p-2 text-white" />
+              <input type="text" name="emoji" value="${ticket.emoji || '📩'}" class="w-full bg-black/60 border border-slate-800 focus:border-amber-500 rounded-lg p-2 text-white" />
             </div>
             <div>
               <label class="block text-xs text-slate-400 mb-1">لون الزر</label>
-              <select name="color" class="w-full bg-slate-900/50 border border-slate-700 rounded-lg p-2 text-white">
+              <select name="color" class="w-full bg-black/60 border border-slate-800 focus:border-amber-500 rounded-lg p-2 text-white">
                 <option value="Primary" ${ticket.color === 'Primary' ? 'selected' : ''}>أزرق (Primary)</option>
                 <option value="Secondary" ${ticket.color === 'Secondary' ? 'selected' : ''}>رمادي (Secondary)</option>
                 <option value="Success" ${ticket.color === 'Success' ? 'selected' : ''}>أخضر (Success)</option>
@@ -214,21 +227,21 @@ function startDashboard(client) {
             </div>
             <div>
               <label class="block text-xs text-slate-400 mb-1">الرتبة الممنشنة</label>
-              <select name="mentionRole" class="w-full bg-slate-900/50 border border-slate-700 rounded-lg p-2 text-white">${roleOptions}</select>
+              <select name="mentionRole" class="w-full bg-black/60 border border-slate-800 focus:border-amber-500 rounded-lg p-2 text-white">${roleOptions}</select>
             </div>
           </div>
           <div class="grid grid-cols-1 md:grid-cols-3 gap-4">
             <div>
               <label class="block text-xs text-slate-400 mb-1">الكاتيجوري المخصص</label>
-              <select name="category" class="w-full bg-slate-900/50 border border-slate-700 rounded-lg p-2 text-white">${catOptions}</select>
+              <select name="category" class="w-full bg-black/60 border border-slate-800 focus:border-amber-500 rounded-lg p-2 text-white">${catOptions}</select>
             </div>
             <div>
               <label class="block text-xs text-slate-400 mb-1">صيغة اسم الروم</label>
-              <input type="text" name="channelName" value="${ticket.channelName || 'ticket-{user}'}" class="w-full bg-slate-900/50 border border-slate-700 rounded-lg p-2 text-white" />
+              <input type="text" name="channelName" value="${ticket.channelName || 'ticket-{user}'}" class="w-full bg-black/60 border border-slate-800 focus:border-amber-500 rounded-lg p-2 text-white" />
             </div>
             <div>
               <label class="block text-xs text-slate-400 mb-1">رسالة الترحيب بالتكت</label>
-              <input type="text" name="welcomeMessage" value="${ticket.welcomeMessage || ''}" class="w-full bg-slate-900/50 border border-slate-700 rounded-lg p-2 text-white" />
+              <input type="text" name="welcomeMessage" value="${ticket.welcomeMessage || ''}" class="w-full bg-black/60 border border-slate-800 focus:border-amber-500 rounded-lg p-2 text-white" />
             </div>
           </div>
         </div>
@@ -236,24 +249,23 @@ function startDashboard(client) {
     });
 
     const content = `
-      <!-- جزء اختيار الروم وإرسال لوحة التذاكر فوراً -->
       <div class="glass p-6 rounded-2xl border border-slate-800 mb-8">
-        <h3 class="text-xl font-bold mb-2 text-indigo-400">📤 إرسال لوحة التذاكر (Send Ticket Panel)</h3>
+        <h3 class="text-xl font-bold mb-2 text-amber-400">📤 إرسال لوحة التذاكر (Send Ticket Panel)</h3>
         <p class="text-xs text-slate-400 mb-4">اختر الروم المناسب من القائمة ثم اضغط على زر إرسال لإطلاق لوحة التذاكر في سيرفرك مباشرة.</p>
         <form action="/dashboard/${guild.id}/tickets/send-panel" method="POST" class="flex flex-col md:flex-row gap-4 items-end">
           <div class="flex-grow">
             <label class="block text-xs text-slate-400 mb-1">روم الإرسال المستهدف</label>
-            <select name="targetChannelId" class="w-full bg-slate-900/50 border border-slate-700 rounded-lg p-3 text-white" required>
+            <select name="targetChannelId" class="w-full bg-black/60 border border-slate-800 focus:border-amber-500 rounded-lg p-3 text-white" required>
               ${sendPanelChannelOptions}
             </select>
           </div>
-          <button type="submit" class="px-6 py-3 rounded-lg bg-emerald-600 hover:bg-emerald-700 text-white font-bold transition">إرسال اللوحة الآن (Send Panel)</button>
+          <button type="submit" class="px-6 py-3 rounded-full btn-gold text-black font-black transition shadow-lg">إرسال اللوحة الآن</button>
         </form>
       </div>
 
       <div class="flex justify-between items-center mb-6">
         <h2 class="text-2xl font-bold">🎫 التحكم في التذاكر وأنواعها</h2>
-        <button type="button" onclick="addNewTicketCard();" class="px-5 py-2 rounded-lg bg-indigo-600 hover:bg-indigo-700 text-white font-medium transition text-sm"><i class="fa-solid fa-plus"></i> إضافة نوع تكت جديد</button>
+        <button type="button" onclick="addNewTicketCard();" class="px-5 py-2 rounded-full btn-gold text-black font-black text-sm transition shadow-lg"><i class="fa-solid fa-plus"></i> إضافة نوع تكت جديد</button>
       </div>
       
       <form action="/dashboard/${guild.id}/tickets/save" method="POST" class="space-y-6">
@@ -262,12 +274,12 @@ function startDashboard(client) {
             <h4 class="font-bold text-white mb-1">الحد الأقصى للتكتات المفتوحة لكل عضو</h4>
             <p class="text-xs text-slate-400">حدد عدد التكتات التي يسمح للعضو الواحد بفتحها كحد أقصى.</p>
           </div>
-          <input type="number" name="maxTickets" min="1" max="100" value="${config.maxTickets || '4'}" class="w-24 bg-slate-900/50 border border-slate-700 rounded-lg p-3 text-white text-center focus:outline-none focus:border-indigo-500" />
+          <input type="number" name="maxTickets" min="1" max="100" value="${config.maxTickets || '4'}" class="w-24 bg-black/60 border border-slate-800 focus:border-amber-500 rounded-lg p-3 text-white text-center" />
         </div>
         <div id="tickets-container">
           ${ticketsHtml}
         </div>
-        <button type="submit" class="px-8 py-3 rounded-lg bg-indigo-600 hover:bg-indigo-700 text-white font-bold transition w-full">حفظ بنية التكتات بالكامل</button>
+        <button type="submit" class="px-8 py-3 rounded-full btn-gold text-black font-black transition w-full shadow-lg">حفظ بنية التكتات بالكامل</button>
       </form>
 
       <script>
@@ -288,22 +300,22 @@ function startDashboard(client) {
           const cardHtml = \`
             <div class="glass p-6 rounded-2xl border border-slate-800 space-y-4 mb-6 ticket-card">
               <div class="flex justify-between items-center">
-                <h4 class="font-bold text-lg text-indigo-400 card-title">تذكرة جديدة</h4>
+                <h4 class="font-bold text-lg text-amber-400 card-title">تذكرة جديدة</h4>
                 <button type="button" onclick="this.closest('.ticket-card').remove();" class="text-red-500 hover:text-red-400 transition font-medium text-sm"><i class="fa-solid fa-trash"></i> إزالة</button>
               </div>
               <input type="hidden" name="id" value="\${id}" />
               <div class="grid grid-cols-1 md:grid-cols-4 gap-4">
                 <div>
                   <label class="block text-xs text-slate-400 mb-1">اسم الزر</label>
-                  <input type="text" name="name" class="w-full bg-slate-900/50 border border-slate-700 rounded-lg p-2 text-white" required />
+                  <input type="text" name="name" class="w-full bg-black/60 border border-slate-800 focus:border-amber-500 rounded-lg p-2 text-white" required />
                 </div>
                 <div>
                   <label class="block text-xs text-slate-400 mb-1">Emoji</label>
-                  <input type="text" name="emoji" value="📩" class="w-full bg-slate-900/50 border border-slate-700 rounded-lg p-2 text-white" />
+                  <input type="text" name="emoji" value="📩" class="w-full bg-black/60 border border-slate-800 focus:border-amber-500 rounded-lg p-2 text-white" />
                 </div>
                 <div>
                   <label class="block text-xs text-slate-400 mb-1">لون الزر</label>
-                  <select name="color" class="w-full bg-slate-900/50 border border-slate-700 rounded-lg p-2 text-white">
+                  <select name="color" class="w-full bg-black/60 border border-slate-800 focus:border-amber-500 rounded-lg p-2 text-white">
                     <option value="Primary">أزرق (Primary)</option>
                     <option value="Secondary">رمادي (Secondary)</option>
                     <option value="Success">أخضر (Success)</option>
@@ -312,7 +324,7 @@ function startDashboard(client) {
                 </div>
                 <div>
                   <label class="block text-xs text-slate-400 mb-1">الرتبة الممنشنة</label>
-                  <select name="mentionRole" class="w-full bg-slate-900/50 border border-slate-700 rounded-lg p-2 text-white">
+                  <select name="mentionRole" class="w-full bg-black/60 border border-slate-800 focus:border-amber-500 rounded-lg p-2 text-white">
                     \${generateSelectOptions(rawRoles, "لا يوجد منشن (فارغ)")}
                   </select>
                 </div>
@@ -320,17 +332,17 @@ function startDashboard(client) {
               <div class="grid grid-cols-1 md:grid-cols-3 gap-4">
                 <div>
                   <label class="block text-xs text-slate-400 mb-1">الكاتيجوري المخصص</label>
-                  <select name="category" class="w-full bg-slate-900/50 border border-slate-700 rounded-lg p-2 text-white">
+                  <select name="category" class="w-full bg-black/60 border border-slate-800 focus:border-amber-500 rounded-lg p-2 text-white">
                     \${generateSelectOptions(rawCategories, "لا يوجد تحديد (فارغ)")}
                   </select>
                 </div>
                 <div>
                   <label class="block text-xs text-slate-400 mb-1">صيغة اسم الروم</label>
-                  <input type="text" name="channelName" value="ticket-{user}" class="w-full bg-slate-900/50 border border-slate-700 rounded-lg p-2 text-white" />
+                  <input type="text" name="channelName" value="ticket-{user}" class="w-full bg-black/60 border border-slate-800 focus:border-amber-500 rounded-lg p-2 text-white" />
                 </div>
                 <div>
                   <label class="block text-xs text-slate-400 mb-1">رسالة الترحيب بالتكت</label>
-                  <input type="text" name="welcomeMessage" value="أهلاً بك، تفضل بكتابة طلبك." class="w-full bg-slate-900/50 border border-slate-700 rounded-lg p-2 text-white" />
+                  <input type="text" name="welcomeMessage" value="أهلاً بك، تفضل بكتابة طلبك." class="w-full bg-black/60 border border-slate-800 focus:border-amber-500 rounded-lg p-2 text-white" />
                 </div>
               </div>
             </div>
@@ -343,7 +355,6 @@ function startDashboard(client) {
     res.send(renderGuildLayout(guild, "tickets", content, req.session.user));
   });
 
-  // مسار إرسال لوحة التكت الفوري للروم المحدد من الداشبورد
   app.post('/dashboard/:guildId/tickets/send-panel', checkAuth, async (req, res) => {
     const guild = client.guilds.cache.get(req.params.guildId);
     if (!guild) return res.send("السيرفر غير متوفر.");
@@ -356,7 +367,7 @@ function startDashboard(client) {
         const embed = new EmbedBuilder()
           .setTitle(config.general?.botName || "نظام التذاكر")
           .setDescription("اختر نوع التذكرة لفتح تكت جديد والمتابعة مع الدعم الفني.")
-          .setColor(config.general?.themeColor || '#4f46e5');
+          .setColor('#d4af37');
 
         const row = new ActionRowBuilder();
         config.tickets.forEach(ticket => {
@@ -376,13 +387,12 @@ function startDashboard(client) {
 
         await targetChannel.send({ embeds: [embed], components: [row] });
       } catch (err) {
-        console.error("Failed to send panel via dashboard:", err);
+        console.error("Failed to send panel:", err);
       }
     }
     res.redirect(`/dashboard/${guild.id}/tickets`);
   });
 
-  // صفحة نظام الردود التلقائية (تم إصلاحها بالكامل لتفادي الأخطاء البرمجية)
   app.get('/dashboard/:guildId/auto-reply', checkAuth, (req, res) => {
     const guild = client.guilds.cache.get(req.params.guildId);
     if (!guild) return res.send("البوت ليس متواجداً في هذا السيرفر!");
@@ -399,26 +409,26 @@ function startDashboard(client) {
       repliesHtml += `
         <div class="glass p-6 rounded-2xl border border-slate-800 space-y-4 mb-6 reply-card">
           <div class="flex justify-between items-center">
-            <h4 class="font-bold text-lg text-indigo-400">رد تلقائي</h4>
+            <h4 class="font-bold text-lg text-amber-400">رد تلقائي</h4>
             <button type="button" onclick="this.closest('.reply-card').remove();" class="text-red-500 hover:text-red-400 transition font-medium text-sm"><i class="fa-solid fa-trash"></i> إزالة</button>
           </div>
           <div class="grid grid-cols-1 md:grid-cols-4 gap-4">
             <div>
               <label class="block text-xs text-slate-400 mb-1">الكلمة المفتاحية</label>
-              <input type="text" name="keyword" value="${reply.keyword || ''}" class="w-full bg-slate-900/50 border border-slate-700 rounded-lg p-2 text-white" required />
+              <input type="text" name="keyword" value="${reply.keyword || ''}" class="w-full bg-black/60 border border-slate-800 focus:border-amber-500 rounded-lg p-2 text-white" required />
             </div>
             <div class="md:col-span-2">
               <label class="block text-xs text-slate-400 mb-1">الرد المبرمج</label>
-              <input type="text" name="reply" value="${reply.reply || ''}" class="w-full bg-slate-900/50 border border-slate-700 rounded-lg p-2 text-white" required />
+              <input type="text" name="reply" value="${reply.reply || ''}" class="w-full bg-black/60 border border-slate-800 focus:border-amber-500 rounded-lg p-2 text-white" required />
             </div>
             <div>
               <label class="block text-xs text-slate-400 mb-1">مكان العمل</label>
-              <select name="channel" class="w-full bg-slate-900/50 border border-slate-700 rounded-lg p-2 text-white">${channelOptions}</select>
+              <select name="channel" class="w-full bg-black/60 border border-slate-800 focus:border-amber-500 rounded-lg p-2 text-white">${channelOptions}</select>
             </div>
           </div>
           <div>
             <label class="block text-xs text-slate-400 mb-1">حالة الرد</label>
-            <select name="enabled" class="bg-slate-900/50 border border-slate-700 rounded-lg p-2 text-white">
+            <select name="enabled" class="bg-black/60 border border-slate-800 focus:border-amber-500 rounded-lg p-2 text-white">
               <option value="true" ${reply.enabled ? 'selected' : ''}>مفعّل</option>
               <option value="false" ${!reply.enabled ? 'selected' : ''}>معطّل</option>
             </select>
@@ -430,13 +440,13 @@ function startDashboard(client) {
     const content = `
       <div class="flex justify-between items-center mb-6">
         <h2 class="text-2xl font-bold">💬 نظام الردود التلقائية (Auto Reply)</h2>
-        <button type="button" onclick="addNewReplyCard();" class="px-5 py-2 rounded-lg bg-indigo-600 hover:bg-indigo-700 text-white font-medium transition text-sm"><i class="fa-solid fa-plus"></i> إضافة رد جديد</button>
+        <button type="button" onclick="addNewReplyCard();" class="px-5 py-2 rounded-full btn-gold text-black font-black text-sm transition shadow-lg"><i class="fa-solid fa-plus"></i> إضافة رد جديد</button>
       </div>
       <form action="/dashboard/${guild.id}/auto-reply/save" method="POST" class="space-y-6">
         <div id="replies-container">
           ${repliesHtml}
         </div>
-        <button type="submit" class="px-8 py-3 rounded-lg bg-indigo-600 hover:bg-indigo-700 text-white font-bold transition w-full">حفظ جميع الردود</button>
+        <button type="submit" class="px-8 py-3 rounded-full btn-gold text-black font-black transition w-full shadow-lg">حفظ جميع الردود</button>
       </form>
 
       <script>
@@ -455,28 +465,28 @@ function startDashboard(client) {
           const cardHtml = \`
             <div class="glass p-6 rounded-2xl border border-slate-800 space-y-4 mb-6 reply-card">
               <div class="flex justify-between items-center">
-                <h4 class="font-bold text-lg text-indigo-400">رد تلقائي جديد</h4>
+                <h4 class="font-bold text-lg text-amber-400">رد تلقائي جديد</h4>
                 <button type="button" onclick="this.closest('.reply-card').remove();" class="text-red-500 hover:text-red-400 transition font-medium text-sm"><i class="fa-solid fa-trash"></i> إزالة</button>
               </div>
               <div class="grid grid-cols-1 md:grid-cols-4 gap-4">
                 <div>
                   <label class="block text-xs text-slate-400 mb-1">الكلمة المفتاحية</label>
-                  <input type="text" name="keyword" class="w-full bg-slate-900/50 border border-slate-700 rounded-lg p-2 text-white" required />
+                  <input type="text" name="keyword" class="w-full bg-black/60 border border-slate-800 focus:border-amber-500 rounded-lg p-2 text-white" required />
                 </div>
                 <div class="md:col-span-2">
                   <label class="block text-xs text-slate-400 mb-1">الرد المبرمج</label>
-                  <input type="text" name="reply" class="w-full bg-slate-900/50 border border-slate-700 rounded-lg p-2 text-white" required />
+                  <input type="text" name="reply" class="w-full bg-black/60 border border-slate-800 focus:border-amber-500 rounded-lg p-2 text-white" required />
                 </div>
                 <div>
                   <label class="block text-xs text-slate-400 mb-1">مكان العمل</label>
-                  <select name="channel" class="w-full bg-slate-900/50 border border-slate-700 rounded-lg p-2 text-white">
+                  <select name="channel" class="w-full bg-black/60 border border-slate-800 focus:border-amber-500 rounded-lg p-2 text-white">
                     \${generateChannelOptions()}
                   </select>
                 </div>
               </div>
               <div>
                 <label class="block text-xs text-slate-400 mb-1">حالة الرد</label>
-                <select name="enabled" class="bg-slate-900/50 border border-slate-700 rounded-lg p-2 text-white">
+                <select name="enabled" class="bg-black/60 border border-slate-800 focus:border-amber-500 rounded-lg p-2 text-white">
                   <option value="true">مفعّل</option>
                   <option value="false">معطّل</option>
                 </select>
@@ -491,7 +501,168 @@ function startDashboard(client) {
     res.send(renderGuildLayout(guild, "auto-reply", content, req.session.user));
   });
 
-  // صفحة نظام القيف أواي (Giveaway System) الحديثة بالكامل
+  // صفحة نظام البث الإذاعي والرسائل الجماعية (Broadcast System) الفاخرة بالكامل
+  app.get('/dashboard/:guildId/broadcast', checkAuth, (req, res) => {
+    const guild = client.guilds.cache.get(req.params.guildId);
+    if (!guild) return res.send("البوت ليس متواجداً في هذا السيرفر!");
+
+    const channels = guild.channels.cache;
+    const roles = guild.roles.cache.filter(r => r.name !== '@everyone');
+
+    const channelOptions = getSelectOptions(channels, ChannelType.GuildText);
+    const roleOptions = getRoleSelectOptions(roles);
+
+    const content = `
+      <h2 class="text-3xl font-black mb-6 text-white border-b border-amber-500/20 pb-4">📢 نظام البث والإرسال الجماعي (Broadcast System)</h2>
+      
+      <form action="/dashboard/${guild.id}/broadcast/send" method="POST" class="space-y-6">
+        <div class="glass p-8 rounded-3xl border border-slate-800 space-y-6">
+          
+          <div class="grid grid-cols-1 md:grid-cols-2 gap-6">
+            <div>
+              <label class="block mb-2 text-slate-400 font-semibold">نوع الإرسال (Delivery Method)</label>
+              <select name="sendType" class="w-full bg-black/60 border border-slate-800 focus:border-amber-500 rounded-xl p-3 text-white focus:outline-none transition">
+                <option value="channel">إرسال في روم محدد (Channel Broadcast)</option>
+                <option value="dm">إرسال في الخاص جماعي للأعضاء (DM Broadcast)</option>
+              </select>
+            </div>
+            <div>
+              <label class="block mb-2 text-slate-400 font-semibold">روم الإرسال (في حال الإرسال للروم)</label>
+              <select name="channelId" class="w-full bg-black/60 border border-slate-800 focus:border-amber-500 rounded-xl p-3 text-white focus:outline-none transition">${channelOptions}</select>
+            </div>
+          </div>
+
+          <div class="grid grid-cols-1 md:grid-cols-2 gap-6">
+            <div>
+              <label class="block mb-2 text-slate-400 font-semibold">تحديد الفئة المستهدفة (Target Recipients)</label>
+              <select name="targetType" class="w-full bg-black/60 border border-slate-800 focus:border-amber-500 rounded-xl p-3 text-white focus:outline-none transition">
+                <option value="all">جميع أعضاء السيرفر</option>
+                <option value="online">الأعضاء المتصلين فقط (Online / Idle / DND)</option>
+                <option value="offline">الأعضاء الأوفلاين فقط (Offline)</option>
+                <option value="hasRole">الأعضاء الذين يملكون رتبة معينة</option>
+                <option value="noRole">الأعضاء الذين لا يملكون رتبة معينة</option>
+                <option value="bots">البوتات فقط (Bots Only)</option>
+                <option value="humans">الأعضاء فقط (دون البوتات)</option>
+              </select>
+            </div>
+            <div>
+              <label class="block mb-2 text-slate-400 font-semibold">الرتبة المستهدفة (إذا تم اختيار فرز الرتب)</label>
+              <select name="targetRoleId" class="w-full bg-black/60 border border-slate-800 focus:border-amber-500 rounded-xl p-3 text-white focus:outline-none transition">${roleOptions}</select>
+            </div>
+          </div>
+
+          <div class="grid grid-cols-1 md:grid-cols-2 gap-6">
+            <div>
+              <label class="block mb-2 text-slate-400 font-semibold">صيغة وهيكل الرسالة</label>
+              <select name="format" class="w-full bg-black/60 border border-slate-800 focus:border-amber-500 rounded-xl p-3 text-white focus:outline-none transition">
+                <option value="plain">رسالة عادية (Plain Text)</option>
+                <option value="embed">إمبد احترافي (Embed Message)</option>
+              </select>
+            </div>
+            <div>
+              <label class="block mb-2 text-slate-400 font-semibold">المنشن (Mention)</label>
+              <select name="mention" class="w-full bg-black/60 border border-slate-800 focus:border-amber-500 rounded-xl p-3 text-white focus:outline-none transition">
+                <option value="none">بدون منشن</option>
+                <option value="everyone">@everyone</option>
+                <option value="here">@here</option>
+                ${roleOptions}
+              </select>
+            </div>
+          </div>
+
+          <div class="border-t border-amber-500/20 pt-6 space-y-4">
+            <h4 class="text-sm font-bold text-amber-400">محتوى وبنية البث:</h4>
+            <div>
+              <label class="block mb-2 text-slate-400">عنوان الإمبد (Embed Title - اختياري)</label>
+              <input type="text" name="embedTitle" class="w-full bg-black/60 border border-slate-800 focus:border-amber-500 rounded-xl p-3 text-white focus:outline-none transition" />
+            </div>
+            <div>
+              <label class="block mb-2 text-slate-400">نص الرسالة أو وصف الإمبد (Message / Embed Description)</label>
+              <textarea name="message" class="w-full bg-black/60 border border-slate-800 focus:border-amber-500 rounded-xl p-3 text-white h-32 focus:outline-none transition" required></textarea>
+            </div>
+            <div>
+              <label class="block mb-2 text-slate-400">رابط صورة البث (Image URL - اختياري)</label>
+              <input type="text" name="embedImage" class="w-full bg-black/60 border border-slate-800 focus:border-amber-500 rounded-xl p-3 text-white focus:outline-none transition" />
+            </div>
+          </div>
+
+        </div>
+        <button type="submit" class="px-8 py-4 rounded-full btn-gold text-black font-black transition shadow-lg w-full text-lg">بدء إطلاق حملة البث الملكي (Start Broadcast)</button>
+      </form>
+    `;
+
+    res.send(renderGuildLayout(guild, "broadcast", content, req.session.user));
+  });
+
+  // معالجة حملة البث الجماعي وحظر الـ Rate Limit
+  app.post('/dashboard/:guildId/broadcast/send', checkAuth, async (req, res) => {
+    const guild = client.guilds.cache.get(req.params.guildId);
+    if (!guild) return res.send("السيرفر غير متوفر.");
+
+    const { sendType, channelId, targetType, targetRoleId, format, mention, embedTitle, message, embedImage } = req.body;
+
+    try {
+      // جلب وتحديث جميع الأعضاء لضمان دقة البيانات
+      await guild.members.fetch();
+
+      const targetMembers = guild.members.cache.filter(m => {
+        if (targetType === 'bots') return m.user.bot;
+        if (targetType === 'humans') return !m.user.bot;
+        if (targetType === 'online') return m.presence && m.presence.status !== 'offline';
+        if (targetType === 'offline') return !m.presence || m.presence.status === 'offline';
+        if (targetType === 'hasRole') return m.roles.cache.has(targetRoleId);
+        if (targetType === 'noRole') return !m.roles.cache.has(targetRoleId);
+        return true;
+      });
+
+      // بناء محتوى البث الذكي
+      let payload = {};
+      if (format === 'plain') {
+        payload.content = message;
+      } else {
+        const embed = new EmbedBuilder()
+          .setDescription(message)
+          .setColor('#d4af37')
+          .setTimestamp();
+        
+        if (embedTitle) embed.setTitle(embedTitle);
+        if (embedImage) embed.setImage(embedImage);
+        payload.embeds = [embed];
+      }
+
+      // الإرسال في روم محدد
+      if (sendType === 'channel') {
+        const chan = guild.channels.cache.get(channelId);
+        if (chan) {
+          let mentionStr = '';
+          if (mention === 'everyone') mentionStr = '@everyone';
+          else if (mention === 'here') mentionStr = '@here';
+          else if (mention !== 'none') mentionStr = `<@&${mention}>`;
+
+          if (mentionStr) {
+            payload.content = mentionStr + '\n' + (payload.content || '');
+          }
+          await chan.send(payload);
+        }
+      } 
+      // الإرسال الخاص (DM Broadcast) مع وقاية Rate Limit (ثانية واحدة بين كل رسالة)
+      else if (sendType === 'dm') {
+        (async () => {
+          for (const [id, member] of targetMembers) {
+            if (member.user.bot) continue;
+            await member.send(payload).catch(() => {});
+            await new Promise(r => setTimeout(r, 1000)); // فاصل زمني لتجنب الباند والتقييد
+          }
+        })();
+      }
+
+    } catch (err) {
+      console.error("Error during broadcast:", err);
+    }
+
+    res.redirect(`/dashboard/${guild.id}/broadcast`);
+  });
+
   app.get('/dashboard/:guildId/giveaway', checkAuth, (req, res) => {
     const guild = client.guilds.cache.get(req.params.guildId);
     if (!guild) return res.send("البوت ليس متواجداً في هذا السيرفر!");
@@ -513,46 +684,45 @@ function startDashboard(client) {
               <h5 class="font-bold text-white">${g.prize}</h5>
               <p class="text-xs text-slate-400">ينتهي في: ${new Date(g.endAt).toLocaleString()} | الفائزون: ${g.winnersCount}</p>
             </div>
-            <a href="/dashboard/${guild.id}/giveaway/end/${g.messageId}" class="px-4 py-2 rounded-lg bg-red-600 hover:bg-red-700 text-white text-xs font-bold transition">إنهاء الآن (End Now)</a>
+            <a href="/dashboard/${guild.id}/giveaway/end/${g.messageId}" class="px-4 py-2 rounded-full border border-red-500/50 hover:bg-red-500/10 text-red-400 text-xs font-bold transition">إنهاء الآن (End Now)</a>
           </div>
         `;
       }
     });
 
     const content = `
-      <h2 class="text-2xl font-bold mb-6">🎉 نظام القيف أواي وإدارة السحوبات (Giveaway)</h2>
+      <h2 class="text-3xl font-black mb-6 text-white border-b border-amber-500/20 pb-4">🎉 نظام القيف أواي وإدارة السحوبات (Giveaway)</h2>
       <div class="grid grid-cols-1 md:grid-cols-2 gap-8">
         
-        <!-- استمارة بدء قيف أواي جديد -->
         <form action="/dashboard/${guild.id}/giveaway/start" method="POST" class="glass p-6 rounded-2xl border border-slate-800 space-y-4">
-          <h3 class="text-lg font-bold text-indigo-400 border-b border-slate-800 pb-2">إنشاء قيف أواي جديد</h3>
+          <h3 class="text-lg font-bold text-amber-400 border-b border-slate-800 pb-2">إنشاء قيف أواي جديد</h3>
           
           <div>
             <label class="block text-xs text-slate-400 mb-1">الروم المستهدف</label>
-            <select name="channelId" class="w-full bg-slate-900/50 border border-slate-700 rounded-lg p-2 text-white" required>${channelOptions}</select>
+            <select name="channelId" class="w-full bg-black/60 border border-slate-800 focus:border-amber-500 rounded-lg p-2 text-white" required>${channelOptions}</select>
           </div>
           <div class="grid grid-cols-1 md:grid-cols-2 gap-4">
             <div>
               <label class="block text-xs text-slate-400 mb-1">العنوان الرئيسي</label>
-              <input type="text" name="title" class="w-full bg-slate-900/50 border border-slate-700 rounded-lg p-2 text-white" required />
+              <input type="text" name="title" class="w-full bg-black/60 border border-slate-800 focus:border-amber-500 rounded-lg p-2 text-white" required />
             </div>
             <div>
               <label class="block text-xs text-slate-400 mb-1">الجائزة</label>
-              <input type="text" name="prize" class="w-full bg-slate-900/50 border border-slate-700 rounded-lg p-2 text-white" required />
+              <input type="text" name="prize" class="w-full bg-black/60 border border-slate-800 focus:border-amber-500 rounded-lg p-2 text-white" required />
             </div>
           </div>
           <div>
             <label class="block text-xs text-slate-400 mb-1">الوصف</label>
-            <textarea name="description" class="w-full bg-slate-900/50 border border-slate-700 rounded-lg p-2 text-white h-20"></textarea>
+            <textarea name="description" class="w-full bg-black/60 border border-slate-800 focus:border-amber-500 rounded-lg p-2 text-white h-20"></textarea>
           </div>
           <div class="grid grid-cols-1 md:grid-cols-2 gap-4">
             <div>
               <label class="block text-xs text-slate-400 mb-1">المدة الزمنية</label>
-              <input type="number" name="durationValue" min="1" class="w-full bg-slate-900/50 border border-slate-700 rounded-lg p-2 text-white" required />
+              <input type="number" name="durationValue" min="1" class="w-full bg-black/60 border border-slate-800 focus:border-amber-500 rounded-lg p-2 text-white" required />
             </div>
             <div>
               <label class="block text-xs text-slate-400 mb-1">الوحدة الزمنية</label>
-              <select name="durationUnit" class="w-full bg-slate-900/50 border border-slate-700 rounded-lg p-2 text-white">
+              <select name="durationUnit" class="w-full bg-black/60 border border-slate-800 focus:border-amber-500 rounded-lg p-2 text-white">
                 <option value="minutes">دقائق</option>
                 <option value="hours">ساعات</option>
                 <option value="days">أيام</option>
@@ -562,11 +732,11 @@ function startDashboard(client) {
           <div class="grid grid-cols-1 md:grid-cols-2 gap-4">
             <div>
               <label class="block text-xs text-slate-400 mb-1">عدد الفائزين</label>
-              <input type="number" name="winnersCount" min="1" value="1" class="w-full bg-slate-900/50 border border-slate-700 rounded-lg p-2 text-white" required />
+              <input type="number" name="winnersCount" min="1" value="1" class="w-full bg-black/60 border border-slate-800 focus:border-amber-500 rounded-lg p-2 text-white" required />
             </div>
             <div>
               <label class="block text-xs text-slate-400 mb-1">نوع المنشن</label>
-              <select name="mentionType" class="w-full bg-slate-900/50 border border-slate-700 rounded-lg p-2 text-white">
+              <select name="mentionType" class="w-full bg-black/60 border border-slate-800 focus:border-amber-500 rounded-lg p-2 text-white">
                 <option value="none">بدون منشن</option>
                 <option value="everyone">@everyone</option>
                 <option value="here">@here</option>
@@ -575,37 +745,35 @@ function startDashboard(client) {
             </div>
           </div>
           
-          <!-- الشروط (Requirements) -->
           <div class="p-4 bg-slate-950/40 rounded-xl border border-slate-900 space-y-4">
             <h4 class="text-xs font-bold text-slate-400">شروط المشاركة الاختيارية</h4>
             <div class="grid grid-cols-1 md:grid-cols-2 gap-4">
               <div>
                 <label class="block text-xs text-slate-500 mb-1">يجب امتلاك رتبة معينة</label>
-                <select name="requiredRoleId" class="w-full bg-slate-900/50 border border-slate-700 rounded-lg p-2 text-white">${roleOptions}</select>
+                <select name="requiredRoleId" class="w-full bg-black/60 border border-slate-800 focus:border-amber-500 rounded-lg p-2 text-white">${roleOptions}</select>
               </div>
               <div>
                 <label class="block text-xs text-slate-500 mb-1">مدة الانتساب للسيرفر (أيام)</label>
-                <input type="number" name="requiredServerDays" min="0" value="0" class="w-full bg-slate-900/50 border border-slate-700 rounded-lg p-2 text-white" />
+                <input type="number" name="requiredServerDays" min="0" value="0" class="w-full bg-black/60 border border-slate-800 focus:border-amber-500 rounded-lg p-2 text-white" />
               </div>
             </div>
           </div>
 
           <div>
             <label class="block text-xs text-slate-400 mb-1">صورة إضافية اختيارية (URL)</label>
-            <input type="text" name="image" class="w-full bg-slate-900/50 border border-slate-700 rounded-lg p-2 text-white" />
+            <input type="text" name="image" class="w-full bg-black/60 border border-slate-800 focus:border-amber-500 rounded-lg p-2 text-white" />
           </div>
           <div>
             <label class="block text-xs text-slate-400 mb-1">رسالة الفائز المخصصة</label>
-            <input type="text" name="winnerMessageTemplate" value="🎉 مبروك {user} لقد ربحت {prize}!" class="w-full bg-slate-900/50 border border-slate-700 rounded-lg p-2 text-white" />
+            <input type="text" name="winnerMessageTemplate" value="🎉 مبروك {user} لقد ربحت {prize}!" class="w-full bg-black/60 border border-slate-800 focus:border-amber-500 rounded-lg p-2 text-white" />
           </div>
           
-          <button type="submit" class="px-6 py-3 rounded-lg bg-indigo-600 hover:bg-indigo-700 text-white font-bold transition w-full">إطلاق السحب الآن (Start Giveaway)</button>
+          <button type="submit" class="px-6 py-3 rounded-full btn-gold text-black font-black transition w-full shadow-lg">إطلاق السحب الآن</button>
         </form>
 
-        <!-- قائمة السحوبات النشطة حالياً -->
         <div class="space-y-4">
           <div class="glass p-6 rounded-2xl border border-slate-800">
-            <h3 class="text-lg font-bold text-indigo-400 border-b border-slate-800 pb-2 mb-4">السحوبات النشطة</h3>
+            <h3 class="text-lg font-bold text-amber-400 border-b border-slate-800 pb-2 mb-4">السحوبات النشطة</h3>
             ${activeHtml || '<p class="text-slate-400 text-sm">لا توجد سحوبات نشطة حالياً.</p>'}
           </div>
         </div>
@@ -615,7 +783,6 @@ function startDashboard(client) {
     res.send(renderGuildLayout(guild, "giveaway", content, req.session.user));
   });
 
-  // مسار إطلاق قيف أواي جديد من الداشبورد
   app.post('/dashboard/:guildId/giveaway/start', checkAuth, async (req, res) => {
     const guild = client.guilds.cache.get(req.params.guildId);
     if (!guild) return res.send("السيرفر غير متوفر.");
@@ -656,7 +823,7 @@ function startDashboard(client) {
         const embed = new EmbedBuilder()
           .setTitle(`🎉 قيف أواي: ${prize} 🎉`)
           .setDescription(`**العنوان:** ${title}\n${description}\n\n**الشروط:**\n${reqsStr}\n\n**المنتهي في:** <t:${Math.floor(endAt / 1000)}:R>\n**عدد الفائزين:** ${winnersCount}`)
-          .setColor('#4f46e5')
+          .setColor('#d4af37')
           .setTimestamp();
 
         if (image) embed.setImage(image);
@@ -693,7 +860,6 @@ function startDashboard(client) {
     res.redirect(`/dashboard/${guild.id}/giveaway`);
   });
 
-  // مسار إنهاء القيف أواي فورياً من الداشبورد
   app.get('/dashboard/:guildId/giveaway/end/:msgId', checkAuth, async (req, res) => {
     const guild = client.guilds.cache.get(req.params.guildId);
     if (!guild) return res.send("السيرفر غير متوفر.");
@@ -707,7 +873,6 @@ function startDashboard(client) {
     res.redirect(`/dashboard/${guild.id}/giveaway`);
   });
 
-  // صفحة نظام الترحيب (Welcome System)
   app.get('/dashboard/:guildId/welcome', checkAuth, (req, res) => {
     const guild = client.guilds.cache.get(req.params.guildId);
     if (!guild) return res.send("البوت ليس متواجداً في هذا السيرفر!");
@@ -725,7 +890,7 @@ function startDashboard(client) {
               <h4 class="font-bold text-white mb-1">تفعيل نظام الترحيب</h4>
               <p class="text-xs text-slate-400">تمكين الترحيب بالأعضاء وتوليد بطاقة ترحيبية مرسومة تلقائياً.</p>
             </div>
-            <select name="enabled" class="bg-slate-900/50 border border-slate-700 rounded-lg p-2 text-white">
+            <select name="enabled" class="bg-black/60 border border-slate-800 focus:border-amber-500 rounded-lg p-2 text-white">
               <option value="true" ${config.welcome?.enabled ? 'selected' : ''}>مفعّل</option>
               <option value="false" ${!config.welcome?.enabled ? 'selected' : ''}>معطّل</option>
             </select>
@@ -734,11 +899,11 @@ function startDashboard(client) {
           <div class="grid grid-cols-1 md:grid-cols-2 gap-6">
             <div>
               <label class="block mb-2 text-slate-400">روم الترحيب</label>
-              <select name="channelId" class="w-full bg-slate-900/50 border border-slate-700 rounded-lg p-3 text-white">${logChannelOptions}</select>
+              <select name="channelId" class="w-full bg-black/60 border border-slate-800 focus:border-amber-500 rounded-lg p-3 text-white">${logChannelOptions}</select>
             </div>
             <div>
               <label class="block mb-2 text-slate-400">عمل منشن (Mention) للعضو عند الترحيب به</label>
-              <select name="mentionUser" class="w-full bg-slate-900/50 border border-slate-700 rounded-lg p-3 text-white">
+              <select name="mentionUser" class="w-full bg-black/60 border border-slate-800 focus:border-amber-500 rounded-lg p-3 text-white">
                 <option value="true" ${config.welcome?.mentionUser ? 'selected' : ''}>نعم</option>
                 <option value="false" ${!config.welcome?.mentionUser ? 'selected' : ''}>لا</option>
               </select>
@@ -746,18 +911,17 @@ function startDashboard(client) {
           </div>
           <div>
             <label class="block mb-2 text-slate-400">رسالة الترحيب النصية</label>
-            <textarea name="message" class="w-full bg-slate-900/50 border border-slate-700 rounded-lg p-3 text-white h-28 focus:outline-none focus:border-indigo-500">${config.welcome?.message || 'Welcome to the server, {user}!'}</textarea>
+            <textarea name="message" class="w-full bg-black/60 border border-slate-800 focus:border-amber-500 rounded-lg p-3 text-white h-28 focus:outline-none transition">${config.welcome?.message || 'Welcome to the server, {user}!'}</textarea>
             <span class="text-xs text-slate-500">ملاحظة: يمكنك استخدام {user} لمنشن العضو، {server} لاسم السيرفر، {count} لعدد الأعضاء.</span>
           </div>
         </div>
-        <button type="submit" class="px-8 py-3 rounded-lg bg-indigo-600 hover:bg-indigo-700 text-white font-bold transition">حفظ إعدادات الترحيب</button>
+        <button type="submit" class="px-8 py-3 rounded-full btn-gold text-black font-black transition shadow-lg">حفظ إعدادات الترحيب</button>
       </form>
     `;
 
     res.send(renderGuildLayout(guild, "welcome", content, req.session.user));
   });
 
-  // صفحة نظام الرتبة التلقائية (Auto Role)
   app.get('/dashboard/:guildId/auto-role', checkAuth, (req, res) => {
     const guild = client.guilds.cache.get(req.params.guildId);
     if (!guild) return res.send("البوت ليس متواجداً في هذا السيرفر!");
@@ -775,7 +939,7 @@ function startDashboard(client) {
               <h4 class="font-bold text-white mb-1">تفعيل إعطاء رتبة تلقائياً</h4>
               <p class="text-xs text-slate-400">سيحصل العضو على الرتبة المحددة بمجرد دخوله السيرفر مباشرة.</p>
             </div>
-            <select name="enabled" class="bg-slate-900/50 border border-slate-700 rounded-lg p-2 text-white">
+            <select name="enabled" class="bg-black/60 border border-slate-800 focus:border-amber-500 rounded-lg p-2 text-white">
               <option value="true" ${config.autoRole?.enabled ? 'selected' : ''}>مفعّل</option>
               <option value="false" ${!config.autoRole?.enabled ? 'selected' : ''}>معطّل</option>
             </select>
@@ -783,17 +947,16 @@ function startDashboard(client) {
           <hr class="border-slate-800" />
           <div>
             <label class="block mb-2 text-slate-400">الرتبة المحددة</label>
-            <select name="roleId" class="w-full bg-slate-900/50 border border-slate-700 rounded-lg p-3 text-white">${roleOptions}</select>
+            <select name="roleId" class="w-full bg-black/60 border border-slate-800 focus:border-amber-500 rounded-lg p-3 text-white">${roleOptions}</select>
           </div>
         </div>
-        <button type="submit" class="px-8 py-3 rounded-lg bg-indigo-600 hover:bg-indigo-700 text-white font-bold transition">حفظ إعدادات الرتبة</button>
+        <button type="submit" class="px-8 py-3 rounded-full btn-gold text-black font-black transition shadow-lg">حفظ إعدادات الرتبة</button>
       </form>
     `;
 
     res.send(renderGuildLayout(guild, "auto-role", content, req.session.user));
   });
 
-  // صفحة مرسل رسائل Embed (Embed Sender)
   app.get('/dashboard/:guildId/embed-sender', checkAuth, (req, res) => {
     const guild = client.guilds.cache.get(req.params.guildId);
     if (!guild) return res.send("البوت ليس متواجداً في هذا السيرفر!");
@@ -807,41 +970,40 @@ function startDashboard(client) {
         <div class="glass p-6 rounded-2xl border border-slate-800 space-y-6">
           <div>
             <label class="block mb-2 text-slate-400">روم إرسال الرسالة</label>
-            <select name="channelId" class="w-full bg-slate-900/50 border border-slate-700 rounded-lg p-3 text-white">${textChannelOptions}</select>
+            <select name="channelId" class="w-full bg-black/60 border border-slate-800 focus:border-amber-500 rounded-lg p-3 text-white">${textChannelOptions}</select>
           </div>
           <div class="grid grid-cols-1 md:grid-cols-2 gap-6">
             <div>
               <label class="block mb-2 text-slate-400">عنوان الإمبد (Embed Title)</label>
-              <input type="text" name="title" class="w-full bg-slate-900/50 border border-slate-700 rounded-lg p-3 text-white" />
+              <input type="text" name="title" class="w-full bg-black/60 border border-slate-800 focus:border-amber-500 rounded-lg p-3 text-white" />
             </div>
             <div>
               <label class="block mb-2 text-slate-400">اللون (Color / Hex Code)</label>
-              <input type="text" name="color" placeholder="#4f46e5" value="#4f46e5" class="w-full bg-slate-900/50 border border-slate-700 rounded-lg p-3 text-white" />
+              <input type="text" name="color" placeholder="#d4af37" value="#d4af37" class="w-full bg-black/60 border border-slate-800 focus:border-amber-500 rounded-lg p-3 text-white" />
             </div>
           </div>
           <div>
             <label class="block mb-2 text-slate-400">المحتوى / الوصف (Description)</label>
-            <textarea name="description" class="w-full bg-slate-900/50 border border-slate-700 rounded-lg p-3 text-white h-32 focus:outline-none focus:border-indigo-500"></textarea>
+            <textarea name="description" class="w-full bg-black/60 border border-slate-800 focus:border-amber-500 rounded-lg p-3 text-white h-32 focus:outline-none transition"></textarea>
           </div>
           <div class="grid grid-cols-1 md:grid-cols-2 gap-6">
             <div>
               <label class="block mb-2 text-slate-400">الصورة الكبيرة (Image URL)</label>
-              <input type="text" name="image" class="w-full bg-slate-900/50 border border-slate-700 rounded-lg p-3 text-white" />
+              <input type="text" name="image" class="w-full bg-black/60 border border-slate-800 focus:border-amber-500 rounded-lg p-3 text-white" />
             </div>
             <div>
               <label class="block mb-2 text-slate-400">الصورة الصغيرة (Thumbnail URL)</label>
-              <input type="text" name="thumbnail" class="w-full bg-slate-900/50 border border-slate-700 rounded-lg p-3 text-white" />
+              <input type="text" name="thumbnail" class="w-full bg-black/60 border border-slate-800 focus:border-amber-500 rounded-lg p-3 text-white" />
             </div>
           </div>
         </div>
-        <button type="submit" class="px-8 py-3 rounded-lg bg-indigo-600 hover:bg-indigo-700 text-white font-bold transition">ارسل الرسالة الآن</button>
+        <button type="submit" class="px-8 py-3 rounded-full btn-gold text-black font-black transition shadow-lg">ارسل الرسالة الآن</button>
       </form>
     `;
 
     res.send(renderGuildLayout(guild, "embed-sender", content, req.session.user));
   });
 
-  // مسار حفظ الإعدادات العامة
   app.post('/dashboard/:guildId/save-general', checkAuth, (req, res) => {
     const config = getGuildConfig(req.params.guildId);
     config.general = {
@@ -851,13 +1013,12 @@ function startDashboard(client) {
       ticketChannel: req.body.ticketChannel,
       defaultCategory: req.body.defaultCategory,
       transcriptChannel: req.body.transcriptChannel,
-      themeColor: config.general?.themeColor || '#4f46e5'
+      themeColor: config.general?.themeColor || '#d4af37'
     };
     client.saveConfig();
     res.redirect(`/dashboard/${req.params.guildId}`);
   });
 
-  // مسار حفظ التكتات
   app.post('/dashboard/:guildId/tickets/save', checkAuth, (req, res) => {
     const config = getGuildConfig(req.params.guildId);
     config.maxTickets = req.body.maxTickets || '4';
@@ -891,7 +1052,6 @@ function startDashboard(client) {
     res.redirect(`/dashboard/${req.params.guildId}/tickets`);
   });
 
-  // مسار حفظ الردود التلقائية
   app.post('/dashboard/:guildId/auto-reply/save', checkAuth, (req, res) => {
     const config = getGuildConfig(req.params.guildId);
     
@@ -916,7 +1076,6 @@ function startDashboard(client) {
     res.redirect(`/dashboard/${req.params.guildId}/auto-reply`);
   });
 
-  // مسار حفظ إعدادات الترحيب
   app.post('/dashboard/:guildId/welcome/save', checkAuth, (req, res) => {
     const config = getGuildConfig(req.params.guildId);
     config.welcome = {
@@ -929,7 +1088,6 @@ function startDashboard(client) {
     res.redirect(`/dashboard/${req.params.guildId}/welcome`);
   });
 
-  // مسار حفظ إعدادات الرتبة التلقائية
   app.post('/dashboard/:guildId/auto-role/save', checkAuth, (req, res) => {
     const config = getGuildConfig(req.params.guildId);
     config.autoRole = {
@@ -940,7 +1098,6 @@ function startDashboard(client) {
     res.redirect(`/dashboard/${req.params.guildId}/auto-role`);
   });
 
-  // مسار إرسال إمبد مخصص
   app.post('/dashboard/:guildId/embed-sender/send', checkAuth, async (req, res) => {
     const guild = client.guilds.cache.get(req.params.guildId);
     if (!guild) return res.send("السيرفر غير متوفر.");
@@ -948,7 +1105,7 @@ function startDashboard(client) {
     const chan = guild.channels.cache.get(req.body.channelId);
     if (chan) {
       try {
-        const embed = new EmbedBuilder().setColor(req.body.color || '#4f46e5');
+        const embed = new EmbedBuilder().setColor(req.body.color || '#d4af37');
 
         if (req.body.title) embed.setTitle(req.body.title);
         if (req.body.description) embed.setDescription(req.body.description);
@@ -957,7 +1114,7 @@ function startDashboard(client) {
 
         await chan.send({ embeds: [embed] });
       } catch (err) {
-        console.error("Failed to send embed via dashboard:", err);
+        console.error("Failed to send embed:", err);
       }
     }
     res.redirect(`/dashboard/${req.params.guildId}/embed-sender`);
@@ -1005,7 +1162,7 @@ function renderBaseHtml(title, body, user) {
         <a href="/logout" class="text-xs text-red-500 hover:text-red-400">تسجيل الخروج</a>
       </div>
     </div>
-  ` : `<a href="/login" class="px-5 py-2 rounded-full bg-indigo-600 hover:bg-indigo-700 text-white font-medium transition text-sm">تسجيل دخول</a>`;
+  ` : `<a href="/login" class="px-6 py-3 rounded-full btn-gold text-black font-black text-sm transition shadow-lg inline-block">تسجيل دخول</a>`;
 
   return `
     <!DOCTYPE html>
@@ -1018,25 +1175,43 @@ function renderBaseHtml(title, body, user) {
       <link href="https://cdnjs.cloudflare.com/ajax/libs/font-awesome/6.4.0/css/all.min.css" rel="stylesheet">
       <style>
         @import url('https://fonts.googleapis.com/css2?family=Tajawal:wght@400;500;700;900&display=swap');
-        body { font-family: 'Tajawal', sans-serif; background-color: #030712; color: #f3f4f6; }
-        .glass { background: rgba(17, 24, 39, 0.7); backdrop-filter: blur(12px); -webkit-backdrop-filter: blur(12px); }
-        .glow { text-shadow: 0 0 15px rgba(99, 102, 241, 0.5); }
-        .card-glow:hover { border-color: rgba(99, 102, 241, 0.4); box-shadow: 0 10px 25px -5px rgba(99, 102, 241, 0.15); }
+        :root {
+          --gold: #d4af37;
+          --gold-glow: rgba(212, 175, 55, 0.35);
+          --premium-black: #050505;
+          --glass-bg: rgba(15, 15, 15, 0.75);
+        }
+        body { font-family: 'Tajawal', sans-serif; background-color: var(--premium-black); color: #f3f4f6; }
+        .glass { background: var(--glass-bg); backdrop-filter: blur(14px); -webkit-backdrop-filter: blur(14px); border: 1px solid rgba(212, 175, 55, 0.15); }
+        .btn-gold {
+          background: linear-gradient(135deg, #d4af37 0%, #aa7c11 100%);
+          color: #000 !important;
+          font-weight: 900;
+          box-shadow: 0 4px 15px var(--gold-glow);
+          transition: all 0.3s cubic-bezier(0.4, 0, 0.2, 1);
+        }
+        .btn-gold:hover {
+          transform: scale(1.04);
+          box-shadow: 0 6px 22px rgba(212, 175, 55, 0.6);
+        }
+        .glow-text { text-shadow: 0 0 15px rgba(212, 175, 55, 0.4); }
+        .card-glow { transition: all 0.3s ease; }
+        .card-glow:hover { border-color: rgba(212, 175, 55, 0.4); box-shadow: 0 10px 25px -5px rgba(212, 175, 55, 0.15); }
       </style>
     </head>
     <body class="min-h-screen flex flex-col">
-      <nav class="glass border-b border-slate-800 py-4 px-6 md:px-12 flex justify-between items-center sticky top-0 z-50">
+      <nav class="glass border-b border-amber-500/10 py-4 px-6 md:px-12 flex justify-between items-center sticky top-0 z-50">
         <div class="flex items-center space-x-4 space-x-reverse">
-          <i class="fa-solid fa-headset text-indigo-500 text-3xl"></i>
-          <span class="text-xl font-black text-white tracking-wider">Discord Ticket Pro</span>
+          <i class="fa-solid fa-gem text-amber-500 text-3xl"></i>
+          <span class="text-2xl font-black text-white tracking-wider glow-text">Discord Ticket Gold</span>
         </div>
         ${userSection}
       </nav>
       <main class="flex-grow max-w-7xl w-full mx-auto p-6 md:p-12">
         ${body}
       </main>
-      <footer class="glass border-t border-slate-800 text-center py-6 text-slate-500 text-xs">
-        &copy; 2026 Discord Ticket Pro. جميع الحقوق محفوظة.
+      <footer class="glass border-t border-amber-500/10 text-center py-6 text-slate-500 text-xs">
+        &copy; 2026 Discord Ticket Gold. جميع الحقوق محفوظة.
       </footer>
     </body>
     </html>
@@ -1052,6 +1227,7 @@ function renderGuildLayout(guild, activePage, content, user) {
     { id: 'general', label: '⚙️ الإعدادات العامة', link: `/dashboard/${guild.id}` },
     { id: 'tickets', label: '🎫 نظام التكتات', link: `/dashboard/${guild.id}/tickets` },
     { id: 'auto-reply', label: '💬 الردود التلقائية', link: `/dashboard/${guild.id}/auto-reply` },
+    { id: 'broadcast', label: '📢 نظام البث العام', link: `/dashboard/${guild.id}/broadcast` },
     { id: 'giveaway', label: '🎉 نظام القيف أواي', link: `/dashboard/${guild.id}/giveaway` },
     { id: 'welcome', label: '👋 نظام الترحيب', link: `/dashboard/${guild.id}/welcome` },
     { id: 'auto-role', label: '🛡️ الرتب التلقائية', link: `/dashboard/${guild.id}/auto-role` },
@@ -1060,9 +1236,11 @@ function renderGuildLayout(guild, activePage, content, user) {
 
   let sidebarHtml = '';
   menuItems.forEach(item => {
-    const active = activePage === item.id ? 'bg-indigo-600/20 text-indigo-400 border-indigo-500' : 'text-slate-400 border-transparent hover:bg-slate-800/50 hover:text-white';
+    const active = activePage === item.id 
+      ? 'bg-amber-500/10 text-amber-400 border-amber-500' 
+      : 'text-slate-400 border-transparent hover:bg-amber-500/5 hover:text-white';
     sidebarHtml += `
-      <a href="${item.link}" class="flex items-center space-x-3 space-x-reverse px-4 py-3 rounded-xl border-r-4 transition font-semibold text-sm ${active}">
+      <a href="${item.link}" class="flex items-center space-x-3 space-x-reverse px-4 py-3 rounded-xl border-r-4 transition font-bold text-sm ${active}">
         <span>${item.label}</span>
       </a>
     `;
@@ -1071,10 +1249,10 @@ function renderGuildLayout(guild, activePage, content, user) {
   const body = `
     <div class="flex flex-col md:flex-row gap-8">
       <aside class="w-full md:w-1/4 glass p-6 rounded-3xl border border-slate-800 space-y-6 self-start">
-        <div class="flex flex-col items-center pb-6 border-b border-slate-800">
-          <img src="${botLogo}" class="w-20 h-20 rounded-full mb-3 shadow-lg shadow-indigo-600/10 ring-2 ring-slate-800" />
+        <div class="flex flex-col items-center pb-6 border-b border-amber-500/15">
+          <img src="${botLogo}" class="w-20 h-20 rounded-full mb-3 shadow-lg shadow-amber-500/5 ring-2 ring-amber-500/30" />
           <h4 class="font-bold text-lg text-white text-center leading-snug">${botName}</h4>
-          <span class="text-xs text-indigo-400 font-semibold mt-1">لوحة تحكم السيرفر</span>
+          <span class="text-xs text-amber-500 font-bold mt-1">لوحة تحكم السيرفر</span>
         </div>
         <nav class="flex flex-col space-y-2">
           ${sidebarHtml}
