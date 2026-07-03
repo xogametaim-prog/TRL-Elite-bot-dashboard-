@@ -2,7 +2,7 @@ const express = require('express');
 const session = require('express-session');
 const axios = require('axios');
 const fs = require('fs');
-const { ChannelType } = require('discord.js');
+const { ChannelType, EmbedBuilder, ActionRowBuilder, ButtonBuilder, ButtonStyle } = require('discord.js');
 
 const app = express();
 
@@ -127,6 +127,7 @@ function startDashboard(client) {
     const logChannelOptions = getSelectOptions(channels, ChannelType.GuildText, config.general?.logsChannel);
     const ticketChannelOptions = getSelectOptions(channels, ChannelType.GuildText, config.general?.ticketChannel);
     const categoryOptions = getSelectOptions(channels, ChannelType.GuildCategory, config.general?.defaultCategory);
+    const transChannelOptions = getSelectOptions(channels, ChannelType.GuildText, config.general?.transcriptChannel);
 
     const content = `
       <h2 class="text-2xl font-bold mb-6">⚙️ الإعدادات العامة للمشروع</h2>
@@ -141,13 +142,19 @@ function startDashboard(client) {
             <input type="text" name="botLogo" value="${config.general?.botLogo || client.user.displayAvatarURL()}" class="w-full bg-slate-900/50 border border-slate-700 rounded-lg p-3 text-white focus:outline-none focus:border-indigo-500" />
           </div>
         </div>
-        <div class="grid grid-cols-1 md:grid-cols-3 gap-6">
+        <div class="grid grid-cols-1 md:grid-cols-2 gap-6">
           <div>
-            <label class="block mb-2 text-slate-400">روم السجلات (Logs)</label>
+            <label class="block mb-2 text-slate-400">روم السجلات واللوق (Ticket Logs)</label>
             <select name="logsChannel" class="w-full bg-slate-900/50 border border-slate-700 rounded-lg p-3 text-white focus:outline-none focus:border-indigo-500">${logChannelOptions}</select>
           </div>
           <div>
-            <label class="block mb-2 text-slate-400">روم إرسال بنل التكت</label>
+            <label class="block mb-2 text-slate-400">روم حفظ الترانسكريبت (Transcript Channel)</label>
+            <select name="transcriptChannel" class="w-full bg-slate-900/50 border border-slate-700 rounded-lg p-3 text-white focus:outline-none focus:border-indigo-500">${transChannelOptions}</select>
+          </div>
+        </div>
+        <div class="grid grid-cols-1 md:grid-cols-2 gap-6">
+          <div>
+            <label class="block mb-2 text-slate-400">الروم الافتراضي لإرسال بنل التكت</label>
             <select name="ticketChannel" class="w-full bg-slate-900/50 border border-slate-700 rounded-lg p-3 text-white focus:outline-none focus:border-indigo-500">${ticketChannelOptions}</select>
           </div>
           <div>
@@ -172,6 +179,8 @@ function startDashboard(client) {
 
     const rolesJson = JSON.stringify(roles.map(r => ({ id: r.id, name: r.name })));
     const categoriesJson = JSON.stringify(channels.filter(c => c.type === ChannelType.GuildCategory).map(c => ({ id: c.id, name: c.name })));
+
+    const sendPanelChannelOptions = getSelectOptions(channels, ChannelType.GuildText, config.general?.ticketChannel);
 
     let ticketsHtml = '';
     const tickets = config.tickets || [];
@@ -227,10 +236,26 @@ function startDashboard(client) {
     });
 
     const content = `
+      <!-- جزء اختيار الروم وإرسال لوحة التذاكر فوراً -->
+      <div class="glass p-6 rounded-2xl border border-slate-800 mb-8">
+        <h3 class="text-xl font-bold mb-2 text-indigo-400">📤 إرسال لوحة التذاكر (Send Ticket Panel)</h3>
+        <p class="text-xs text-slate-400 mb-4">اختر الروم المناسب من القائمة ثم اضغط على زر إرسال لإطلاق لوحة التذاكر في سيرفرك مباشرة.</p>
+        <form action="/dashboard/${guild.id}/tickets/send-panel" method="POST" class="flex flex-col md:flex-row gap-4 items-end">
+          <div class="flex-grow">
+            <label class="block text-xs text-slate-400 mb-1">روم الإرسال المستهدف</label>
+            <select name="targetChannelId" class="w-full bg-slate-900/50 border border-slate-700 rounded-lg p-3 text-white" required>
+              ${sendPanelChannelOptions}
+            </select>
+          </div>
+          <button type="submit" class="px-6 py-3 rounded-lg bg-emerald-600 hover:bg-emerald-700 text-white font-bold transition">إرسال اللوحة الآن (Send Panel)</button>
+        </form>
+      </div>
+
       <div class="flex justify-between items-center mb-6">
         <h2 class="text-2xl font-bold">🎫 التحكم في التذاكر وأنواعها</h2>
         <button type="button" onclick="addNewTicketCard();" class="px-5 py-2 rounded-lg bg-indigo-600 hover:bg-indigo-700 text-white font-medium transition text-sm"><i class="fa-solid fa-plus"></i> إضافة نوع تكت جديد</button>
       </div>
+      
       <form action="/dashboard/${guild.id}/tickets/save" method="POST" class="space-y-6">
         <div class="glass p-6 rounded-2xl border border-slate-800 mb-6 flex items-center justify-between">
           <div>
@@ -318,6 +343,46 @@ function startDashboard(client) {
     res.send(renderGuildLayout(guild, "tickets", content, req.session.user));
   });
 
+  // مسار إرسال لوحة التكت الفوري للروم المحدد من الداشبورد
+  app.post('/dashboard/:guildId/tickets/send-panel', checkAuth, async (req, res) => {
+    const guild = client.guilds.cache.get(req.params.guildId);
+    if (!guild) return res.send("السيرفر غير متوفر.");
+
+    const config = getGuildConfig(guild.id);
+    const targetChannel = guild.channels.cache.get(req.body.targetChannelId);
+
+    if (targetChannel && config.tickets && config.tickets.length > 0) {
+      try {
+        const embed = new EmbedBuilder()
+          .setTitle(config.general?.botName || "نظام التذاكر")
+          .setDescription("اختر نوع التذكرة لفتح تكت جديد والمتابعة مع الدعم الفني.")
+          .setColor(config.general?.themeColor || '#4f46e5');
+
+        const row = new ActionRowBuilder();
+        config.tickets.forEach(ticket => {
+          let style = ButtonStyle.Primary;
+          if (ticket.color === 'Secondary') style = ButtonStyle.Secondary;
+          if (ticket.color === 'Success') style = ButtonStyle.Success;
+          if (ticket.color === 'Danger') style = ButtonStyle.Danger;
+
+          row.addComponents(
+            new ButtonBuilder()
+              .setCustomId(`ticket_open_${ticket.id}`)
+              .setLabel(ticket.name)
+              .setEmoji(ticket.emoji || "📩")
+              .setStyle(style)
+          );
+        });
+
+        await targetChannel.send({ embeds: [embed], components: [row] });
+      } catch (err) {
+        console.error("Failed to send panel via dashboard:", err);
+      }
+    }
+    res.redirect(`/dashboard/${guild.id}/tickets`);
+  });
+
+  // صفحة نظام الردود التلقائية (تم إصلاحها بالكامل لتفادي الأخطاء البرمجية)
   app.get('/dashboard/:guildId/auto-reply', checkAuth, (req, res) => {
     const guild = client.guilds.cache.get(req.params.guildId);
     if (!guild) return res.send("البوت ليس متواجداً في هذا السيرفر!");
@@ -340,11 +405,11 @@ function startDashboard(client) {
           <div class="grid grid-cols-1 md:grid-cols-4 gap-4">
             <div>
               <label class="block text-xs text-slate-400 mb-1">الكلمة المفتاحية</label>
-              <input type="text" name="keyword" value="${reply.keyword}" class="w-full bg-slate-900/50 border border-slate-700 rounded-lg p-2 text-white" required />
+              <input type="text" name="keyword" value="${reply.keyword || ''}" class="w-full bg-slate-900/50 border border-slate-700 rounded-lg p-2 text-white" required />
             </div>
             <div class="md:col-span-2">
               <label class="block text-xs text-slate-400 mb-1">الرد المبرمج</label>
-              <input type="text" name="reply" value="${reply.reply}" class="w-full bg-slate-900/50 border border-slate-700 rounded-lg p-2 text-white" required />
+              <input type="text" name="reply" value="${reply.reply || ''}" class="w-full bg-slate-900/50 border border-slate-700 rounded-lg p-2 text-white" required />
             </div>
             <div>
               <label class="block text-xs text-slate-400 mb-1">مكان العمل</label>
@@ -405,7 +470,7 @@ function startDashboard(client) {
                 <div>
                   <label class="block text-xs text-slate-400 mb-1">مكان العمل</label>
                   <select name="channel" class="w-full bg-slate-900/50 border border-slate-700 rounded-lg p-2 text-white">
-                    \    ${generateChannelOptions()}
+                    \${generateChannelOptions()}
                   </select>
                 </div>
               </div>
@@ -426,6 +491,223 @@ function startDashboard(client) {
     res.send(renderGuildLayout(guild, "auto-reply", content, req.session.user));
   });
 
+  // صفحة نظام القيف أواي (Giveaway System) الحديثة بالكامل
+  app.get('/dashboard/:guildId/giveaway', checkAuth, (req, res) => {
+    const guild = client.guilds.cache.get(req.params.guildId);
+    if (!guild) return res.send("البوت ليس متواجداً في هذا السيرفر!");
+
+    const config = getGuildConfig(guild.id);
+    const channels = guild.channels.cache;
+    const roles = guild.roles.cache.filter(r => r.name !== '@everyone');
+
+    const channelOptions = getSelectOptions(channels, ChannelType.GuildText);
+    const roleOptions = getRoleSelectOptions(roles);
+
+    let activeHtml = '';
+    const giveaways = config.giveaways || [];
+    giveaways.forEach(g => {
+      if (!g.ended) {
+        activeHtml += `
+          <div class="glass p-4 rounded-xl border border-slate-800 flex justify-between items-center mb-4">
+            <div>
+              <h5 class="font-bold text-white">${g.prize}</h5>
+              <p class="text-xs text-slate-400">ينتهي في: ${new Date(g.endAt).toLocaleString()} | الفائزون: ${g.winnersCount}</p>
+            </div>
+            <a href="/dashboard/${guild.id}/giveaway/end/${g.messageId}" class="px-4 py-2 rounded-lg bg-red-600 hover:bg-red-700 text-white text-xs font-bold transition">إنهاء الآن (End Now)</a>
+          </div>
+        `;
+      }
+    });
+
+    const content = `
+      <h2 class="text-2xl font-bold mb-6">🎉 نظام القيف أواي وإدارة السحوبات (Giveaway)</h2>
+      <div class="grid grid-cols-1 md:grid-cols-2 gap-8">
+        
+        <!-- استمارة بدء قيف أواي جديد -->
+        <form action="/dashboard/${guild.id}/giveaway/start" method="POST" class="glass p-6 rounded-2xl border border-slate-800 space-y-4">
+          <h3 class="text-lg font-bold text-indigo-400 border-b border-slate-800 pb-2">إنشاء قيف أواي جديد</h3>
+          
+          <div>
+            <label class="block text-xs text-slate-400 mb-1">الروم المستهدف</label>
+            <select name="channelId" class="w-full bg-slate-900/50 border border-slate-700 rounded-lg p-2 text-white" required>${channelOptions}</select>
+          </div>
+          <div class="grid grid-cols-1 md:grid-cols-2 gap-4">
+            <div>
+              <label class="block text-xs text-slate-400 mb-1">العنوان الرئيسي</label>
+              <input type="text" name="title" class="w-full bg-slate-900/50 border border-slate-700 rounded-lg p-2 text-white" required />
+            </div>
+            <div>
+              <label class="block text-xs text-slate-400 mb-1">الجائزة</label>
+              <input type="text" name="prize" class="w-full bg-slate-900/50 border border-slate-700 rounded-lg p-2 text-white" required />
+            </div>
+          </div>
+          <div>
+            <label class="block text-xs text-slate-400 mb-1">الوصف</label>
+            <textarea name="description" class="w-full bg-slate-900/50 border border-slate-700 rounded-lg p-2 text-white h-20"></textarea>
+          </div>
+          <div class="grid grid-cols-1 md:grid-cols-2 gap-4">
+            <div>
+              <label class="block text-xs text-slate-400 mb-1">المدة الزمنية</label>
+              <input type="number" name="durationValue" min="1" class="w-full bg-slate-900/50 border border-slate-700 rounded-lg p-2 text-white" required />
+            </div>
+            <div>
+              <label class="block text-xs text-slate-400 mb-1">الوحدة الزمنية</label>
+              <select name="durationUnit" class="w-full bg-slate-900/50 border border-slate-700 rounded-lg p-2 text-white">
+                <option value="minutes">دقائق</option>
+                <option value="hours">ساعات</option>
+                <option value="days">أيام</option>
+              </select>
+            </div>
+          </div>
+          <div class="grid grid-cols-1 md:grid-cols-2 gap-4">
+            <div>
+              <label class="block text-xs text-slate-400 mb-1">عدد الفائزين</label>
+              <input type="number" name="winnersCount" min="1" value="1" class="w-full bg-slate-900/50 border border-slate-700 rounded-lg p-2 text-white" required />
+            </div>
+            <div>
+              <label class="block text-xs text-slate-400 mb-1">نوع المنشن</label>
+              <select name="mentionType" class="w-full bg-slate-900/50 border border-slate-700 rounded-lg p-2 text-white">
+                <option value="none">بدون منشن</option>
+                <option value="everyone">@everyone</option>
+                <option value="here">@here</option>
+                ${roleOptions}
+              </select>
+            </div>
+          </div>
+          
+          <!-- الشروط (Requirements) -->
+          <div class="p-4 bg-slate-950/40 rounded-xl border border-slate-900 space-y-4">
+            <h4 class="text-xs font-bold text-slate-400">شروط المشاركة الاختيارية</h4>
+            <div class="grid grid-cols-1 md:grid-cols-2 gap-4">
+              <div>
+                <label class="block text-xs text-slate-500 mb-1">يجب امتلاك رتبة معينة</label>
+                <select name="requiredRoleId" class="w-full bg-slate-900/50 border border-slate-700 rounded-lg p-2 text-white">${roleOptions}</select>
+              </div>
+              <div>
+                <label class="block text-xs text-slate-500 mb-1">مدة الانتساب للسيرفر (أيام)</label>
+                <input type="number" name="requiredServerDays" min="0" value="0" class="w-full bg-slate-900/50 border border-slate-700 rounded-lg p-2 text-white" />
+              </div>
+            </div>
+          </div>
+
+          <div>
+            <label class="block text-xs text-slate-400 mb-1">صورة إضافية اختيارية (URL)</label>
+            <input type="text" name="image" class="w-full bg-slate-900/50 border border-slate-700 rounded-lg p-2 text-white" />
+          </div>
+          <div>
+            <label class="block text-xs text-slate-400 mb-1">رسالة الفائز المخصصة</label>
+            <input type="text" name="winnerMessageTemplate" value="🎉 مبروك {user} لقد ربحت {prize}!" class="w-full bg-slate-900/50 border border-slate-700 rounded-lg p-2 text-white" />
+          </div>
+          
+          <button type="submit" class="px-6 py-3 rounded-lg bg-indigo-600 hover:bg-indigo-700 text-white font-bold transition w-full">إطلاق السحب الآن (Start Giveaway)</button>
+        </form>
+
+        <!-- قائمة السحوبات النشطة حالياً -->
+        <div class="space-y-4">
+          <div class="glass p-6 rounded-2xl border border-slate-800">
+            <h3 class="text-lg font-bold text-indigo-400 border-b border-slate-800 pb-2 mb-4">السحوبات النشطة</h3>
+            ${activeHtml || '<p class="text-slate-400 text-sm">لا توجد سحوبات نشطة حالياً.</p>'}
+          </div>
+        </div>
+      </div>
+    `;
+
+    res.send(renderGuildLayout(guild, "giveaway", content, req.session.user));
+  });
+
+  // مسار إطلاق قيف أواي جديد من الداشبورد
+  app.post('/dashboard/:guildId/giveaway/start', checkAuth, async (req, res) => {
+    const guild = client.guilds.cache.get(req.params.guildId);
+    if (!guild) return res.send("السيرفر غير متوفر.");
+
+    const config = getGuildConfig(guild.id);
+    const chan = guild.channels.cache.get(req.body.channelId);
+
+    if (chan) {
+      try {
+        const title = req.body.title;
+        const prize = req.body.prize;
+        const description = req.body.description || '';
+        const durationValue = parseInt(req.body.durationValue);
+        const durationUnit = req.body.durationUnit;
+        const winnersCount = parseInt(req.body.winnersCount || '1');
+        const mentionType = req.body.mentionType;
+        const requiredRoleId = req.body.requiredRoleId || '';
+        const requiredServerDays = parseInt(req.body.requiredServerDays || '0');
+        const image = req.body.image || '';
+        const winnerMessageTemplate = req.body.winnerMessageTemplate || "🎉 مبروك {user} لقد ربحت {prize}!";
+
+        let durationMs = durationValue * 60 * 1000;
+        if (durationUnit === 'hours') durationMs = durationValue * 60 * 60 * 1000;
+        if (durationUnit === 'days') durationMs = durationValue * 24 * 60 * 60 * 1000;
+
+        const endAt = Date.now() + durationMs;
+
+        let mentionStr = '';
+        if (mentionType === 'everyone') mentionStr = '@everyone';
+        else if (mentionType === 'here') mentionStr = '@here';
+        else if (mentionType !== 'none') mentionStr = `<@&${mentionType}>`;
+
+        let reqsStr = '';
+        if (requiredRoleId) reqsStr += `\n• يجب أن تمتلك رتبة: <@&${requiredRoleId}>`;
+        if (requiredServerDays) reqsStr += `\n• يجب أن تكون عضواً بالسيرفر منذ: ${requiredServerDays} يوم/أيام`;
+        if (!reqsStr) reqsStr = 'لا يوجد شروط';
+
+        const embed = new EmbedBuilder()
+          .setTitle(`🎉 قيف أواي: ${prize} 🎉`)
+          .setDescription(`**العنوان:** ${title}\n${description}\n\n**الشروط:**\n${reqsStr}\n\n**المنتهي في:** <t:${Math.floor(endAt / 1000)}:R>\n**عدد الفائزين:** ${winnersCount}`)
+          .setColor('#4f46e5')
+          .setTimestamp();
+
+        if (image) embed.setImage(image);
+
+        const msgPayload = { embeds: [embed] };
+        if (mentionStr) msgPayload.content = mentionStr;
+
+        const msg = await chan.send(msgPayload);
+        await msg.react('🎉');
+
+        if (!config.giveaways) config.giveaways = [];
+        config.giveaways.push({
+          id: `giveaway_${Date.now()}`,
+          messageId: msg.id,
+          channelId: chan.id,
+          title,
+          description,
+          prize,
+          image,
+          durationMs,
+          endAt,
+          winnersCount,
+          requiredRoleId,
+          requiredServerDays,
+          winnerMessageTemplate,
+          ended: false
+        });
+
+        client.saveConfig();
+      } catch (err) {
+        console.error("Failed to start giveaway:", err);
+      }
+    }
+    res.redirect(`/dashboard/${guild.id}/giveaway`);
+  });
+
+  // مسار إنهاء القيف أواي فورياً من الداشبورد
+  app.get('/dashboard/:guildId/giveaway/end/:msgId', checkAuth, async (req, res) => {
+    const guild = client.guilds.cache.get(req.params.guildId);
+    if (!guild) return res.send("السيرفر غير متوفر.");
+
+    const config = getGuildConfig(guild.id);
+    const giveaway = config.giveaways?.find(g => g.messageId === req.params.msgId);
+
+    if (giveaway && !giveaway.ended) {
+      await endGiveaway(client, guild, giveaway);
+    }
+    res.redirect(`/dashboard/${guild.id}/giveaway`);
+  });
+
+  // صفحة نظام الترحيب (Welcome System)
   app.get('/dashboard/:guildId/welcome', checkAuth, (req, res) => {
     const guild = client.guilds.cache.get(req.params.guildId);
     if (!guild) return res.send("البوت ليس متواجداً في هذا السيرفر!");
@@ -475,6 +757,7 @@ function startDashboard(client) {
     res.send(renderGuildLayout(guild, "welcome", content, req.session.user));
   });
 
+  // صفحة نظام الرتبة التلقائية (Auto Role)
   app.get('/dashboard/:guildId/auto-role', checkAuth, (req, res) => {
     const guild = client.guilds.cache.get(req.params.guildId);
     if (!guild) return res.send("البوت ليس متواجداً في هذا السيرفر!");
@@ -510,6 +793,7 @@ function startDashboard(client) {
     res.send(renderGuildLayout(guild, "auto-role", content, req.session.user));
   });
 
+  // صفحة مرسل رسائل Embed (Embed Sender)
   app.get('/dashboard/:guildId/embed-sender', checkAuth, (req, res) => {
     const guild = client.guilds.cache.get(req.params.guildId);
     if (!guild) return res.send("البوت ليس متواجداً في هذا السيرفر!");
@@ -557,6 +841,7 @@ function startDashboard(client) {
     res.send(renderGuildLayout(guild, "embed-sender", content, req.session.user));
   });
 
+  // مسار حفظ الإعدادات العامة
   app.post('/dashboard/:guildId/save-general', checkAuth, (req, res) => {
     const config = getGuildConfig(req.params.guildId);
     config.general = {
@@ -565,12 +850,14 @@ function startDashboard(client) {
       logsChannel: req.body.logsChannel,
       ticketChannel: req.body.ticketChannel,
       defaultCategory: req.body.defaultCategory,
+      transcriptChannel: req.body.transcriptChannel,
       themeColor: config.general?.themeColor || '#4f46e5'
     };
     client.saveConfig();
     res.redirect(`/dashboard/${req.params.guildId}`);
   });
 
+  // مسار حفظ التكتات
   app.post('/dashboard/:guildId/tickets/save', checkAuth, (req, res) => {
     const config = getGuildConfig(req.params.guildId);
     config.maxTickets = req.body.maxTickets || '4';
@@ -604,6 +891,7 @@ function startDashboard(client) {
     res.redirect(`/dashboard/${req.params.guildId}/tickets`);
   });
 
+  // مسار حفظ الردود التلقائية
   app.post('/dashboard/:guildId/auto-reply/save', checkAuth, (req, res) => {
     const config = getGuildConfig(req.params.guildId);
     
@@ -628,6 +916,7 @@ function startDashboard(client) {
     res.redirect(`/dashboard/${req.params.guildId}/auto-reply`);
   });
 
+  // مسار حفظ إعدادات الترحيب
   app.post('/dashboard/:guildId/welcome/save', checkAuth, (req, res) => {
     const config = getGuildConfig(req.params.guildId);
     config.welcome = {
@@ -640,6 +929,7 @@ function startDashboard(client) {
     res.redirect(`/dashboard/${req.params.guildId}/welcome`);
   });
 
+  // مسار حفظ إعدادات الرتبة التلقائية
   app.post('/dashboard/:guildId/auto-role/save', checkAuth, (req, res) => {
     const config = getGuildConfig(req.params.guildId);
     config.autoRole = {
@@ -650,6 +940,7 @@ function startDashboard(client) {
     res.redirect(`/dashboard/${req.params.guildId}/auto-role`);
   });
 
+  // مسار إرسال إمبد مخصص
   app.post('/dashboard/:guildId/embed-sender/send', checkAuth, async (req, res) => {
     const guild = client.guilds.cache.get(req.params.guildId);
     if (!guild) return res.send("السيرفر غير متوفر.");
@@ -657,7 +948,6 @@ function startDashboard(client) {
     const chan = guild.channels.cache.get(req.body.channelId);
     if (chan) {
       try {
-        const { EmbedBuilder } = require('discord.js');
         const embed = new EmbedBuilder().setColor(req.body.color || '#4f46e5');
 
         if (req.body.title) embed.setTitle(req.body.title);
@@ -682,7 +972,8 @@ function getGuildConfig(guildId) {
       tickets: [],
       autoReplies: [],
       welcome: {},
-      autoRole: {}
+      autoRole: {},
+      giveaways: []
     };
   }
   return app.client.config.guilds[guildId];
@@ -761,6 +1052,7 @@ function renderGuildLayout(guild, activePage, content, user) {
     { id: 'general', label: '⚙️ الإعدادات العامة', link: `/dashboard/${guild.id}` },
     { id: 'tickets', label: '🎫 نظام التكتات', link: `/dashboard/${guild.id}/tickets` },
     { id: 'auto-reply', label: '💬 الردود التلقائية', link: `/dashboard/${guild.id}/auto-reply` },
+    { id: 'giveaway', label: '🎉 نظام القيف أواي', link: `/dashboard/${guild.id}/giveaway` },
     { id: 'welcome', label: '👋 نظام الترحيب', link: `/dashboard/${guild.id}/welcome` },
     { id: 'auto-role', label: '🛡️ الرتب التلقائية', link: `/dashboard/${guild.id}/auto-role` },
     { id: 'embed-sender', label: '✉️ مرسل الإمبد', link: `/dashboard/${guild.id}/embed-sender` }
