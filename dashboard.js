@@ -11,7 +11,7 @@ app.use(session({
   resave: false,
   saveUninitialized: false,
   cookie: {
-    maxAge: 7 * 24 * 60 * 60 * 1000 // مدة حفظ الجلسة 7 أيام لمنع التحقق المتكرر
+    maxAge: 7 * 24 * 60 * 60 * 1000 // حفظ جلسة التحقق لمدة 7 أيام متواصلة
   }
 }));
 
@@ -35,6 +35,26 @@ function startDashboard(client) {
   function checkAuth(req, res, next) {
     if (req.session.user) return next();
     res.redirect('/login');
+  }
+
+  // وسيط أمني مخصص للتحقق من صلاحية Administrator بشكل صارم في مسارات السيرفر
+  function checkGuildAdmin(req, res, next) {
+    if (!req.session.user || !req.session.guilds) {
+      return res.redirect('/login');
+    }
+    const guildId = req.params.guildId;
+    const sessionGuild = req.session.guilds.find(g => g.id === guildId);
+    
+    if (!sessionGuild) {
+      return res.send("❌ ليس لديك صلاحية للوصول إلى هذا السيرفر أو أنك لست عضواً فيه.");
+    }
+
+    // التحقق من صلاحية Administrator (0x8) ثنائياً
+    const is_admin = (parseInt(sessionGuild.permissions) & 0x8) === 0x8;
+    if (!is_admin) {
+      return res.send("❌ خطأ صلاحية: هذه اللوحة مخصصة للأعضاء الذين يملكون صلاحية Administrator فقط في هذا السيرفر.");
+    }
+    next();
   }
 
   app.get('/login', (req, res) => {
@@ -100,8 +120,9 @@ function startDashboard(client) {
     `, req.session.user));
   });
 
+  // تصفية السيرفرات للأعضاء الذين يملكون حصراً رتبة Administrator
   app.get('/dashboard', checkAuth, (req, res) => {
-    const adminGuilds = req.session.guilds.filter(g => (g.permissions & 0x8) === 0x8 || (g.permissions & 0x20) === 0x20);
+    const adminGuilds = req.session.guilds.filter(g => (parseInt(g.permissions) & 0x8) === 0x8);
 
     let guildsHtml = `<div class="grid grid-cols-1 md:grid-cols-3 gap-8 mt-8">`;
     adminGuilds.forEach(g => {
@@ -123,12 +144,12 @@ function startDashboard(client) {
 
     res.send(renderBaseHtml("سيرفراتك", `
       <h2 class="text-4xl font-black mb-2 glow-text">اختر السيرفر المستهدف</h2>
-      <p class="text-slate-400">ابدأ في إدارة سيرفرك بأرقى هيكلية رقمية.</p>
+      <p class="text-slate-400">ابدأ في إدارة سيرفراتك التي تمتلك فيها صلاحيات Administrator كلياً.</p>
       ${guildsHtml}
     `, req.session.user));
   });
 
-  app.get('/dashboard/:guildId', checkAuth, (req, res) => {
+  app.get('/dashboard/:guildId', checkAuth, checkGuildAdmin, (req, res) => {
     const guild = client.guilds.cache.get(req.params.guildId);
     if (!guild) return res.send("البوت ليس متواجداً في هذا السيرفر!");
 
@@ -180,7 +201,7 @@ function startDashboard(client) {
     res.send(renderGuildLayout(guild, "general", content, req.session.user, req));
   });
 
-  app.get('/dashboard/:guildId/tickets', checkAuth, (req, res) => {
+  app.get('/dashboard/:guildId/tickets', checkAuth, checkGuildAdmin, (req, res) => {
     const guild = client.guilds.cache.get(req.params.guildId);
     if (!guild) return res.send("البوت ليس متواجداً في هذا السيرفر!");
 
@@ -353,8 +374,7 @@ function startDashboard(client) {
     res.send(renderGuildLayout(guild, "tickets", content, req.session.user, req));
   });
 
-  // معالجة وحفظ وإرسال بنل التكت للروم مع تقسيم الأزرار ديناميكياً
-  app.post('/dashboard/:guildId/tickets/send-panel', checkAuth, async (req, res) => {
+  app.post('/dashboard/:guildId/tickets/send-panel', checkAuth, checkGuildAdmin, async (req, res) => {
     const guild = client.guilds.cache.get(req.params.guildId);
     if (!guild) return res.send("السيرفر غير متوفر.");
 
@@ -379,7 +399,6 @@ function startDashboard(client) {
         .setDescription("اختر نوع التذكرة لفتح تكت جديد والمتابعة مع الدعم الفني.")
         .setColor('#d4af37');
 
-      // تقسيم الأزرار برمجياً لحظر أخطاء الانهيار
       const rows = [];
       let currentRow = new ActionRowBuilder();
 
@@ -405,7 +424,6 @@ function startDashboard(client) {
 
       await targetChannel.send({ embeds: [embed], components: rows });
 
-      // تخزين روم الإرسال في قاعدة البيانات
       config.general.ticketChannel = targetChannelId;
       client.saveConfig();
 
@@ -416,7 +434,7 @@ function startDashboard(client) {
     }
   });
 
-  app.get('/dashboard/:guildId/auto-reply', checkAuth, (req, res) => {
+  app.get('/dashboard/:guildId/auto-reply', checkAuth, checkGuildAdmin, (req, res) => {
     const guild = client.guilds.cache.get(req.params.guildId);
     if (!guild) return res.send("البوت ليس متواجداً في هذا السيرفر!");
 
@@ -503,7 +521,7 @@ function startDashboard(client) {
                 <div>
                   <label class="block text-xs text-slate-400 mb-1">مكان العمل</label>
                   <select name="channel" class="w-full bg-black/60 border border-slate-800 focus:border-amber-500 rounded-lg p-2 text-white">
-                    \* \${generateChannelOptions()}
+                    \${generateChannelOptions()}
                   </select>
                 </div>
               </div>
@@ -524,7 +542,31 @@ function startDashboard(client) {
     res.send(renderGuildLayout(guild, "auto-reply", content, req.session.user, req));
   });
 
-  app.get('/dashboard/:guildId/broadcast', checkAuth, (req, res) => {
+  app.post('/dashboard/:guildId/auto-reply/save', checkAuth, checkGuildAdmin, (req, res) => {
+    const config = getGuildConfig(req.params.guildId);
+    
+    const keywords = normalizeArray(req.body.keyword);
+    const replies = normalizeArray(req.body.reply);
+    const channels = normalizeArray(req.body.channel);
+    const enableds = normalizeArray(req.body.enabled);
+
+    const updatedReplies = [];
+    for (let i = 0; i < keywords.length; i++) {
+      if (!keywords[i]) continue;
+      updatedReplies.push({
+        keyword: keywords[i],
+        reply: replies[i],
+        channel: channels[i] || 'all',
+        enabled: enableds[i] === 'true'
+      });
+    }
+
+    config.autoReplies = updatedReplies;
+    client.saveConfig();
+    res.redirect(`/dashboard/${req.params.guildId}/auto-reply`);
+  });
+
+  app.get('/dashboard/:guildId/broadcast', checkAuth, checkGuildAdmin, (req, res) => {
     const guild = client.guilds.cache.get(req.params.guildId);
     if (!guild) return res.send("البوت ليس متواجداً في هذا السيرفر!");
 
@@ -616,7 +658,7 @@ function startDashboard(client) {
     res.send(renderGuildLayout(guild, "broadcast", content, req.session.user, req));
   });
 
-  app.post('/dashboard/:guildId/broadcast/send', checkAuth, async (req, res) => {
+  app.post('/dashboard/:guildId/broadcast/send', checkAuth, checkGuildAdmin, async (req, res) => {
     const guild = client.guilds.cache.get(req.params.guildId);
     if (!guild) return res.send("السيرفر غير متوفر.");
 
@@ -799,7 +841,7 @@ function startDashboard(client) {
     res.send(renderGuildLayout(guild, "giveaway", content, req.session.user, req));
   });
 
-  app.post('/dashboard/:guildId/giveaway/start', checkAuth, async (req, res) => {
+  app.post('/dashboard/:guildId/giveaway/start', checkAuth, checkGuildAdmin, async (req, res) => {
     const guild = client.guilds.cache.get(req.params.guildId);
     if (!guild) return res.send("السيرفر غير متوفر.");
 
@@ -876,7 +918,7 @@ function startDashboard(client) {
     res.redirect(`/dashboard/${guild.id}/giveaway`);
   });
 
-  app.get('/dashboard/:guildId/giveaway/end/:msgId', checkAuth, async (req, res) => {
+  app.get('/dashboard/:guildId/giveaway/end/:msgId', checkAuth, checkGuildAdmin, async (req, res) => {
     const guild = client.guilds.cache.get(req.params.guildId);
     if (!guild) return res.send("السيرفر غير متوفر.");
 
@@ -889,7 +931,7 @@ function startDashboard(client) {
     res.redirect(`/dashboard/${guild.id}/giveaway`);
   });
 
-  app.get('/dashboard/:guildId/welcome', checkAuth, (req, res) => {
+  app.get('/dashboard/:guildId/welcome', checkAuth, checkGuildAdmin, (req, res) => {
     const guild = client.guilds.cache.get(req.params.guildId);
     if (!guild) return res.send("البوت ليس متواجداً في هذا السيرفر!");
 
@@ -938,7 +980,7 @@ function startDashboard(client) {
     res.send(renderGuildLayout(guild, "welcome", content, req.session.user, req));
   });
 
-  app.get('/dashboard/:guildId/auto-role', checkAuth, (req, res) => {
+  app.get('/dashboard/:guildId/auto-role', checkAuth, checkGuildAdmin, (req, res) => {
     const guild = client.guilds.cache.get(req.params.guildId);
     if (!guild) return res.send("البوت ليس متواجداً في هذا السيرفر!");
 
@@ -973,7 +1015,7 @@ function startDashboard(client) {
     res.send(renderGuildLayout(guild, "auto-role", content, req.session.user, req));
   });
 
-  app.get('/dashboard/:guildId/embed-sender', checkAuth, (req, res) => {
+  app.get('/dashboard/:guildId/embed-sender', checkAuth, checkGuildAdmin, (req, res) => {
     const guild = client.guilds.cache.get(req.params.guildId);
     if (!guild) return res.send("البوت ليس متواجداً في هذا السيرفر!");
 
@@ -1020,7 +1062,7 @@ function startDashboard(client) {
     res.send(renderGuildLayout(guild, "embed-sender", content, req.session.user, req));
   });
 
-  app.post('/dashboard/:guildId/save-general', checkAuth, (req, res) => {
+  app.post('/dashboard/:guildId/save-general', checkAuth, checkGuildAdmin, (req, res) => {
     const config = getGuildConfig(req.params.guildId);
     config.general = {
       botName: req.body.botName,
@@ -1035,7 +1077,7 @@ function startDashboard(client) {
     res.redirect(`/dashboard/${req.params.guildId}`);
   });
 
-  app.post('/dashboard/:guildId/tickets/save', checkAuth, (req, res) => {
+  app.post('/dashboard/:guildId/tickets/save', checkAuth, checkGuildAdmin, (req, res) => {
     const config = getGuildConfig(req.params.guildId);
     config.maxTickets = req.body.maxTickets || '4';
 
@@ -1068,7 +1110,7 @@ function startDashboard(client) {
     res.redirect(`/dashboard/${req.params.guildId}/tickets`);
   });
 
-  app.post('/dashboard/:guildId/auto-reply/save', checkAuth, (req, res) => {
+  app.post('/dashboard/:guildId/auto-reply/save', checkAuth, checkGuildAdmin, (req, res) => {
     const config = getGuildConfig(req.params.guildId);
     
     const keywords = normalizeArray(req.body.keyword);
@@ -1092,7 +1134,7 @@ function startDashboard(client) {
     res.redirect(`/dashboard/${req.params.guildId}/auto-reply`);
   });
 
-  app.post('/dashboard/:guildId/welcome/save', checkAuth, (req, res) => {
+  app.post('/dashboard/:guildId/welcome/save', checkAuth, checkGuildAdmin, (req, res) => {
     const config = getGuildConfig(req.params.guildId);
     config.welcome = {
       enabled: req.body.enabled === 'true',
@@ -1104,7 +1146,7 @@ function startDashboard(client) {
     res.redirect(`/dashboard/${req.params.guildId}/welcome`);
   });
 
-  app.post('/dashboard/:guildId/auto-role/save', checkAuth, (req, res) => {
+  app.post('/dashboard/:guildId/auto-role/save', checkAuth, checkGuildAdmin, (req, res) => {
     const config = getGuildConfig(req.params.guildId);
     config.autoRole = {
       enabled: req.body.enabled === 'true',
@@ -1114,7 +1156,7 @@ function startDashboard(client) {
     res.redirect(`/dashboard/${req.params.guildId}/auto-role`);
   });
 
-  app.post('/dashboard/:guildId/embed-sender/send', checkAuth, async (req, res) => {
+  app.post('/dashboard/:guildId/embed-sender/send', checkAuth, checkGuildAdmin, async (req, res) => {
     const guild = client.guilds.cache.get(req.params.guildId);
     if (!guild) return res.send("السيرفر غير متوفر.");
 
@@ -1239,7 +1281,6 @@ function renderGuildLayout(guild, activePage, content, user, req) {
   const botLogo = config.general?.botLogo || guild.iconURL() || 'https://cdn.discordapp.com/embed/avatars/0.png';
   const botName = config.general?.botName || guild.name;
 
-  // بناء هيكلية لافتات النجاح والخطأ في الداشبورد تلقائياً
   const success = req ? req.query.success : null;
   const error = req ? req.query.error : null;
   let alertHtml = '';
