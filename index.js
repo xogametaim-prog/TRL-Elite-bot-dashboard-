@@ -23,7 +23,8 @@ const client = new Client({
     GatewayIntentBits.GuildMembers,
     GatewayIntentBits.GuildMessages,
     GatewayIntentBits.MessageContent,
-    GatewayIntentBits.GuildMessageReactions
+    GatewayIntentBits.GuildMessageReactions,
+    GatewayIntentBits.GuildPresences // مطلوب لمعرفة حالات اتصال الأعضاء في البث الجماعي
   ],
   partials: [Partials.Channel, Partials.Message, Partials.User, Partials.Reaction]
 });
@@ -111,12 +112,10 @@ async function endGiveaway(client, guild, giveaway) {
         const member = await guild.members.fetch(userId);
         if (!member) continue;
 
-        // التحقق من شرط الرتبة
         if (giveaway.requiredRoleId && !member.roles.cache.has(giveaway.requiredRoleId)) {
           continue;
         }
 
-        // التحقق من شرط مدة التواجد بالسيرفر
         if (giveaway.requiredServerDays) {
           const joinedAt = member.joinedTimestamp;
           const daysDiff = (Date.now() - joinedAt) / (1000 * 60 * 60 * 24);
@@ -148,7 +147,7 @@ async function endGiveaway(client, guild, giveaway) {
     const updatedEmbed = EmbedBuilder.from(originalEmbed)
       .setTitle(`🎉 انتهى القيف أواي: ${giveaway.prize} 🎉`)
       .setDescription(`${originalEmbed.description}\n\n**الفائزون:** ${winnersMentions}`)
-      .setColor('#6366f1');
+      .setColor('#d4af37');
     await message.edit({ embeds: [updatedEmbed], components: [] });
 
     const template = giveaway.winnerMessageTemplate || "🎉 مبروك {user} لقد ربحت {prize}!";
@@ -192,14 +191,14 @@ client.on('guildMemberAdd', async (member) => {
         const ctx = canvas.getContext('2d');
 
         const gradient = ctx.createLinearGradient(0, 0, 800, 350);
-        gradient.addColorStop(0, '#0f172a');
-        gradient.addColorStop(1, '#1e1b4b');
+        gradient.addColorStop(0, '#020205');
+        gradient.addColorStop(1, '#1c170d');
         ctx.fillStyle = gradient;
         ctx.fillRect(0, 0, 800, 350);
 
         ctx.beginPath();
         ctx.arc(400, 110, 75, 0, Math.PI * 2);
-        ctx.fillStyle = '#4f46e5';
+        ctx.fillStyle = '#d4af37';
         ctx.fill();
 
         try {
@@ -212,10 +211,10 @@ client.on('guildMemberAdd', async (member) => {
           ctx.drawImage(avatar, 330, 40, 140, 140);
           ctx.restore();
         } catch (avatarError) {
-          console.error("Failed to load user avatar in index.js, falling back to clean circle:", avatarError);
+          console.error("Failed to load user avatar, falling back to clean circle:", avatarError);
           ctx.beginPath();
           ctx.arc(400, 110, 60, 0, Math.PI * 2);
-          ctx.fillStyle = '#312e81';
+          ctx.fillStyle = '#1c170d';
           ctx.fill();
         }
 
@@ -225,7 +224,7 @@ client.on('guildMemberAdd', async (member) => {
         ctx.fillText(`WELCOME TO THE SERVER`, 400, 230);
 
         ctx.font = '26px sans-serif';
-        ctx.fillStyle = '#a5b4fc';
+        ctx.fillStyle = '#d4af37';
         ctx.fillText(`${member.user.tag}`, 400, 275);
 
         ctx.font = '18px sans-serif';
@@ -235,7 +234,7 @@ client.on('guildMemberAdd', async (member) => {
         const attachment = new AttachmentBuilder(canvas.toBuffer('image/png'), { name: 'welcome.png' });
         payload.files = [attachment];
       } catch (canvasErr) {
-        console.error("Canvas generation failed in index.js, rendering pure text instead:", canvasErr);
+        console.error("Canvas generation failed, rendering pure text instead:", canvasErr);
       }
 
       channel.send(payload).catch((err) => console.error("Error sending welcome message:", err));
@@ -298,7 +297,6 @@ client.on('interactionCreate', async (interaction) => {
   if (!interaction.guild) return;
   const guildConfig = client.config.guilds[interaction.guild.id];
 
-  // التعامل مع تقديم المودال (Modals Submit) للأزرار الاحترافية داخل التكت
   if (interaction.isModalSubmit()) {
     const customId = interaction.customId;
 
@@ -365,7 +363,6 @@ client.on('interactionCreate', async (interaction) => {
     }
   }
 
-  // التفاعل مع أوامر السلاش (Slash Commands)
   if (interaction.isChatInputCommand()) {
     const { commandName } = interaction;
 
@@ -377,7 +374,6 @@ client.on('interactionCreate', async (interaction) => {
     }
   }
 
-  // التفاعل مع الأزرار (أزرار التكت الاحترافية)
   if (interaction.isButton()) {
     const customId = interaction.customId;
 
@@ -440,18 +436,17 @@ client.on('interactionCreate', async (interaction) => {
       const welcomeEmbed = new EmbedBuilder()
         .setTitle(`مرحبًا بك في تذكرة ${ticketType.name}`)
         .setDescription(ticketType.welcomeMessage || "الرجاء كتابة مشكلتك هنا وسيقوم الفريق المختص بمساعدتك قريباً.")
-        .setColor(guildConfig.general?.themeColor || '#4f46e5')
+        .setColor('#d4af37')
         .setThumbnail(interaction.user.displayAvatarURL());
 
-      // الأزرار الاحترافية الجديدة داخل التكت
       const row1 = new ActionRowBuilder().addComponents(
         new ButtonBuilder().setCustomId('ticket_claim').setLabel('Claim').setEmoji('🎫').setStyle(ButtonStyle.Success),
         new ButtonBuilder().setCustomId('ticket_close_confirm').setLabel('Close').setEmoji('🔒').setStyle(ButtonStyle.Danger),
-        new ButtonBuilder().setCustomId('ticket_add_member_btn').setLabel('Add Member').setEmoji('➕').setStyle(ButtonStyle.Primary)
+        new ButtonBuilder().setCustomId('ticket_add_member_btn').setLabel('Add').setEmoji('➕').setStyle(ButtonStyle.Primary)
       );
 
       const row2 = new ActionRowBuilder().addComponents(
-        new ButtonBuilder().setCustomId('ticket_remove_member_btn').setLabel('Remove Member').setEmoji('➖').setStyle(ButtonStyle.Secondary),
+        new ButtonBuilder().setCustomId('ticket_remove_member_btn').setLabel('Remove').setEmoji('➖').setStyle(ButtonStyle.Secondary),
         new ButtonBuilder().setCustomId('ticket_rename_btn').setLabel('Rename').setEmoji('✏️').setStyle(ButtonStyle.Secondary)
       );
 
@@ -469,7 +464,6 @@ client.on('interactionCreate', async (interaction) => {
       sendLog(interaction.guild, logEmbed);
     }
 
-    // زر Claim التفاعلي
     if (customId === 'ticket_claim') {
       const topic = interaction.channel.topic || '';
       if (topic.includes('claimed:')) {
@@ -482,7 +476,7 @@ client.on('interactionCreate', async (interaction) => {
 
       const logEmbed = new EmbedBuilder()
         .setTitle("🎫 تكت مستلم")
-        .setColor('#6366f1')
+        .setColor('#d4af37')
         .addFields(
           { name: "التكت:", value: `<#${interaction.channel.id}>` },
           { name: "المنفذ:", value: `<@${interaction.user.id}>` }
@@ -490,7 +484,6 @@ client.on('interactionCreate', async (interaction) => {
       sendLog(interaction.guild, logEmbed);
     }
 
-    // زر إضافة عضو (فتح المودال)
     if (customId === 'ticket_add_member_btn') {
       const modal = new ModalBuilder().setCustomId('modal_add_member').setTitle('إضافة عضو للتكت');
       const input = new TextInputBuilder()
@@ -503,7 +496,6 @@ client.on('interactionCreate', async (interaction) => {
       await interaction.showModal(modal);
     }
 
-    // زر إزالة عضو (فتح المودال)
     if (customId === 'ticket_remove_member_btn') {
       const modal = new ModalBuilder().setCustomId('modal_remove_member').setTitle('إزالة عضو من التكت');
       const input = new TextInputBuilder()
@@ -516,7 +508,6 @@ client.on('interactionCreate', async (interaction) => {
       await interaction.showModal(modal);
     }
 
-    // زر إعادة تسمية التكت (فتح المودال)
     if (customId === 'ticket_rename_btn') {
       const modal = new ModalBuilder().setCustomId('modal_rename').setTitle('إعادة تسمية التكت');
       const input = new TextInputBuilder()
@@ -529,7 +520,6 @@ client.on('interactionCreate', async (interaction) => {
       await interaction.showModal(modal);
     }
 
-    // تأكيد إغلاق التكت
     if (customId === 'ticket_close_confirm') {
       const row = new ActionRowBuilder().addComponents(
         new ButtonBuilder().setCustomId('ticket_close_yes').setLabel('تأكيد الإغلاق').setStyle(ButtonStyle.Danger),
@@ -542,7 +532,6 @@ client.on('interactionCreate', async (interaction) => {
       await interaction.message.delete().catch(() => {});
     }
 
-    // تنفيذ الإغلاق وبناء ترانسكريبت احترافي زجاجي مدمج
     if (customId === 'ticket_close_yes') {
       await interaction.reply({ content: '⏳ جاري تصدير أرشيف التكت وإغلاق الروم...' });
 
@@ -551,7 +540,6 @@ client.on('interactionCreate', async (interaction) => {
 
       const serverIcon = interaction.guild.iconURL() || 'https://cdn.discordapp.com/embed/avatars/0.png';
       
-      // بناء تصميم ترانسكريبت ويب فاخر
       let transcriptHtml = `
       <!DOCTYPE html>
       <html lang="ar" dir="rtl">
@@ -560,17 +548,17 @@ client.on('interactionCreate', async (interaction) => {
         <title>أرشيف تكت: ${interaction.channel.name}</title>
         <style>
           @import url('https://fonts.googleapis.com/css2?family=Tajawal:wght@400;500;700&display=swap');
-          body { background-color: #0b0f19; color: #f1f5f9; font-family: 'Tajawal', sans-serif; padding: 30px; }
-          .container { max-w: 900px; margin: 0 auto; background: rgba(17, 24, 39, 0.7); backdrop-filter: blur(12px); border: 1px solid rgba(255,255,255,0.08); padding: 30px; border-radius: 20px; box-shadow: 0 10px 30px rgba(0,0,0,0.5); }
-          .header { display: flex; align-items: center; gap: 20px; padding-bottom: 20px; border-b: 1px solid rgba(255,255,255,0.1); margin-bottom: 30px; }
-          .header img { width: 80px; height: 80px; border-radius: 50%; border: 3px solid #6366f1; }
-          .header h2 { margin: 0; color: #fff; font-size: 24px; }
+          body { background-color: #030303; color: #f1f5f9; font-family: 'Tajawal', sans-serif; padding: 30px; }
+          .container { max-w: 900px; margin: 0 auto; background: rgba(15, 15, 15, 0.9); border: 1px solid rgba(212, 175, 55, 0.2); padding: 30px; border-radius: 20px; box-shadow: 0 10px 30px rgba(0,0,0,0.8); }
+          .header { display: flex; align-items: center; gap: 20px; padding-bottom: 20px; border-b: 1px solid rgba(212,175,55,0.2); margin-bottom: 30px; }
+          .header img { width: 80px; height: 80px; border-radius: 50%; border: 3px solid #d4af37; }
+          .header h2 { margin: 0; color: #d4af37; font-size: 24px; text-shadow: 0 0 10px rgba(212,175,55,0.3); }
           .meta-info { font-size: 13px; color: #94a3b8; line-height: 1.6; }
-          .message-box { display: flex; align-items: flex-start; gap: 15px; margin-bottom: 20px; padding: 15px; border-radius: 12px; background: rgba(255,255,255,0.02); border: 1px solid rgba(255,255,255,0.03); transition: 0.2s; }
-          .message-box:hover { background: rgba(255,255,255,0.04); }
+          .message-box { display: flex; align-items: flex-start; gap: 15px; margin-bottom: 20px; padding: 15px; border-radius: 12px; background: rgba(255,255,255,0.02); border: 1px solid rgba(212,175,55,0.05); transition: 0.2s; }
+          .message-box:hover { background: rgba(255,255,255,0.04); border-color: rgba(212,175,55,0.15); }
           .avatar { width: 45px; height: 45px; border-radius: 50%; object-fit: cover; }
           .msg-header { display: flex; align-items: center; gap: 10px; margin-bottom: 5px; }
-          .user { font-weight: 700; color: #818cf8; font-size: 15px; }
+          .user { font-weight: 700; color: #d4af37; font-size: 15px; }
           .time { font-size: 11px; color: #64748b; }
           .content { font-size: 14px; color: #e2e8f0; line-height: 1.5; word-break: break-word; }
         </style>
@@ -624,7 +612,6 @@ client.on('interactionCreate', async (interaction) => {
           { name: "أغلق بواسطة:", value: `<@${interaction.user.id}>` }
         ).setTimestamp();
 
-      // إرسال الأرشيف لقناة الترانسكريبت المحددة، أو قناة اللوق كخيار بديل
       const transChanId = guildConfig?.general?.transcriptChannel || guildConfig?.general?.logsChannel;
       if (transChanId) {
         const transChan = interaction.guild.channels.cache.get(transChanId);
