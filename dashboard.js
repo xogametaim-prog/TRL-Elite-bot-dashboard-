@@ -2,7 +2,7 @@ const express = require('express');
 const session = require('express-session');
 const axios = require('axios');
 const fs = require('fs');
-const { ChannelType, EmbedBuilder, ActionRowBuilder, ButtonBuilder, ButtonStyle } = require('discord.js');
+const { ChannelType, EmbedBuilder, ActionRowBuilder, ButtonBuilder, ButtonStyle, PermissionFlagsBits } = require('discord.js');
 
 const app = express();
 
@@ -11,7 +11,7 @@ app.use(session({
   resave: false,
   saveUninitialized: false,
   cookie: {
-    maxAge: 7 * 24 * 60 * 60 * 1000 // حفظ جلسة التحقق لمدة 7 أيام متواصلة
+    maxAge: 7 * 24 * 60 * 60 * 1000 // حفظ الجلسة لمدة 7 أيام متواصلة لمنع التحقق المكرر
   }
 }));
 
@@ -37,7 +37,6 @@ function startDashboard(client) {
     res.redirect('/login');
   }
 
-  // وسيط أمني مخصص للتحقق من صلاحية Administrator بشكل صارم في مسارات السيرفر
   function checkGuildAdmin(req, res, next) {
     if (!req.session.user || !req.session.guilds) {
       return res.redirect('/login');
@@ -49,7 +48,6 @@ function startDashboard(client) {
       return res.send("❌ ليس لديك صلاحية للوصول إلى هذا السيرفر أو أنك لست عضواً فيه.");
     }
 
-    // التحقق من صلاحية Administrator (0x8) ثنائياً
     const is_admin = (parseInt(sessionGuild.permissions) & 0x8) === 0x8;
     if (!is_admin) {
       return res.send("❌ خطأ صلاحية: هذه اللوحة مخصصة للأعضاء الذين يملكون صلاحية Administrator فقط في هذا السيرفر.");
@@ -113,14 +111,13 @@ function startDashboard(client) {
 
     res.send(renderBaseHtml("الرئيسية", `
       <div class="text-center py-24">
-        <h1 class="text-6xl font-black mb-6 glow-text tracking-wide">اللوحة الملكية للتذاكر</h1>
+        <h1 class="text-6xl font-black mb-6 glow-text tracking-wide text-white">اللوحة الملكية للتذاكر</h1>
         <p class="text-slate-400 max-w-xl mx-auto mb-10 text-lg leading-relaxed">تحكّم متكامل وسرعة عالية مصممة بأرقى خطوط وتناسقات الويب الحديثة لتجربة تفاعلية غير مسبوقة.</p>
         ${loginButton}
       </div>
     `, req.session.user));
   });
 
-  // تصفية السيرفرات للأعضاء الذين يملكون حصراً رتبة Administrator
   app.get('/dashboard', checkAuth, (req, res) => {
     const adminGuilds = req.session.guilds.filter(g => (parseInt(g.permissions) & 0x8) === 0x8);
 
@@ -374,6 +371,7 @@ function startDashboard(client) {
     res.send(renderGuildLayout(guild, "tickets", content, req.session.user, req));
   });
 
+  // معالجة وإرسال لوحة التذاكر برمجياً مع تحليل صلاحيات البوت التلقائي
   app.post('/dashboard/:guildId/tickets/send-panel', checkAuth, checkGuildAdmin, async (req, res) => {
     const guild = client.guilds.cache.get(req.params.guildId);
     if (!guild) return res.send("السيرفر غير متوفر.");
@@ -393,6 +391,22 @@ function startDashboard(client) {
       return res.redirect(`/dashboard/${guild.id}/tickets?error=channel_not_found`);
     }
 
+    // التحقق الفني الصارم من صلاحيات البوت داخل القناة قبل الإرسال وتفادي الأخطاء الصامتة
+    const me = guild.members.me || await guild.members.fetch(client.user.id).catch(() => null);
+    if (!me) {
+      return res.redirect(`/dashboard/${guild.id}/tickets?error=bot_member_not_found`);
+    }
+
+    const channelPerms = targetChannel.permissionsFor(me);
+    const missingPerms = [];
+    if (!channelPerms.has(PermissionFlagsBits.ViewChannel)) missingPerms.push("رؤية القناة (View Channel)");
+    if (!channelPerms.has(PermissionFlagsBits.SendMessages)) missingPerms.push("إرسال الرسائل (Send Messages)");
+    if (!channelPerms.has(PermissionFlagsBits.EmbedLinks)) missingPerms.push("تضمين الروابط (Embed Links)");
+
+    if (missingPerms.length > 0) {
+      return res.redirect(`/dashboard/${guild.id}/tickets?error=missing_perms&perms=${encodeURIComponent(missingPerms.join(' و '))}`);
+    }
+
     try {
       const embed = new EmbedBuilder()
         .setTitle(config.general?.botName || "نظام التذاكر")
@@ -402,21 +416,31 @@ function startDashboard(client) {
       const rows = [];
       let currentRow = new ActionRowBuilder();
 
-      config.tickets.forEach((ticket, idx) => {
+      const validTickets = config.tickets.filter(t => t && t.id && t.name);
+
+      validTickets.forEach((ticket, idx) => {
         let style = ButtonStyle.Primary;
         if (ticket.color === 'Secondary') style = ButtonStyle.Secondary;
         if (ticket.color === 'Success') style = ButtonStyle.Success;
         if (ticket.color === 'Danger') style = ButtonStyle.Danger;
 
+        // معالجة وتأمين الإيموجي المخصص تفادياً لأخطاء الـ Validation
+        let buttonEmoji = ticket.emoji || "📩";
+        const customEmojiRegex = /<?a?:?([^:\s]+):(\d+)>?/;
+        const match = buttonEmoji.match(customEmojiRegex);
+        if (match) {
+          buttonEmoji = match[2]; // استخدام الـ ID لضمان القبول الفوري في واجهة ديسكورد
+        }
+
         currentRow.addComponents(
           new ButtonBuilder()
             .setCustomId(`ticket_open_${ticket.id}`)
             .setLabel(ticket.name)
-            .setEmoji(ticket.emoji || "📩")
+            .setEmoji(buttonEmoji)
             .setStyle(style)
         );
 
-        if ((idx + 1) % 5 === 0 || idx === config.tickets.length - 1) {
+        if ((idx + 1) % 5 === 0 || idx === validTickets.length - 1) {
           rows.push(currentRow);
           currentRow = new ActionRowBuilder();
         }
@@ -429,8 +453,9 @@ function startDashboard(client) {
 
       return res.redirect(`/dashboard/${guild.id}/tickets?success=panel_sent`);
     } catch (err) {
-      console.error("Error sending panel:", err);
-      return res.redirect(`/dashboard/${guild.id}/tickets?error=send_failed`);
+      console.error("[TICKET PANEL SEND ERROR] Crash trace captured inside Node:", err);
+      // تمرير الخطأ الحقيقي المباشر تفادياً للأقنعة البرمجية
+      return res.redirect(`/dashboard/${guild.id}/tickets?error=internal_error&msg=${encodeURIComponent(err.message)}`);
     }
   });
 
@@ -1235,12 +1260,12 @@ function renderBaseHtml(title, body, user) {
         @import url('https://fonts.googleapis.com/css2?family=Tajawal:wght@400;500;700;900&display=swap');
         :root {
           --gold: #d4af37;
-          --gold-glow: rgba(212, 175, 55, 0.35);
-          --premium-black: #050505;
-          --glass-bg: rgba(15, 15, 15, 0.75);
+          --gold-glow: rgba(212, 175, 55, 0.25);
+          --premium-black: #060608;
+          --glass-bg: rgba(12, 12, 16, 0.82);
         }
         body { font-family: 'Tajawal', sans-serif; background-color: var(--premium-black); color: #f3f4f6; }
-        .glass { background: var(--glass-bg); backdrop-filter: blur(14px); -webkit-backdrop-filter: blur(14px); border: 1px solid rgba(212, 175, 55, 0.15); }
+        .glass { background: var(--glass-bg); backdrop-filter: blur(14px); -webkit-backdrop-filter: blur(14px); border: 1px solid rgba(212, 175, 55, 0.12); }
         .btn-gold {
           background: linear-gradient(135deg, #d4af37 0%, #aa7c11 100%);
           color: #000 !important;
@@ -1249,12 +1274,12 @@ function renderBaseHtml(title, body, user) {
           transition: all 0.3s cubic-bezier(0.4, 0, 0.2, 1);
         }
         .btn-gold:hover {
-          transform: scale(1.04);
-          box-shadow: 0 6px 22px rgba(212, 175, 55, 0.6);
+          transform: translateY(-2px);
+          box-shadow: 0 6px 22px rgba(212, 175, 55, 0.5);
         }
-        .glow-text { text-shadow: 0 0 15px rgba(212, 175, 55, 0.4); }
+        .glow-text { text-shadow: 0 0 15px rgba(212, 175, 55, 0.3); }
         .card-glow { transition: all 0.3s ease; }
-        .card-glow:hover { border-color: rgba(212, 175, 55, 0.4); box-shadow: 0 10px 25px -5px rgba(212, 175, 55, 0.15); }
+        .card-glow:hover { border-color: rgba(212, 175, 55, 0.3); box-shadow: 0 10px 25px -5px rgba(212, 175, 55, 0.12); }
       </style>
     </head>
     <body class="min-h-screen flex flex-col">
@@ -1283,41 +1308,50 @@ function renderGuildLayout(guild, activePage, content, user, req) {
 
   const success = req ? req.query.success : null;
   const error = req ? req.query.error : null;
+  const missingPerms = req ? req.query.perms : '';
+  const exceptionMsg = req ? req.query.msg : '';
   let alertHtml = '';
 
   if (success === 'panel_sent') {
     alertHtml = `
-      <div class="mb-6 p-4 rounded-xl border border-emerald-500/20 bg-emerald-500/10 flex items-center gap-3 text-emerald-400 text-sm">
+      <div class="mb-6 p-4 rounded-2xl border border-emerald-500/25 bg-emerald-500/10 flex items-center gap-3 text-emerald-400 text-sm">
         <i class="fa-solid fa-circle-check text-lg"></i>
-        <span>تم إرسال لوحة التذاكر بنجاح إلى القناة المحددة وحفظ الإعدادات!</span>
+        <span>تم إرسال لوحة التذاكر بنجاح إلى القناة المحددة وحفظ إعدادات القناة!</span>
       </div>
     `;
   } else if (error === 'no_channel') {
     alertHtml = `
-      <div class="mb-6 p-4 rounded-xl border border-red-500/20 bg-red-500/10 flex items-center gap-3 text-red-400 text-sm">
+      <div class="mb-6 p-4 rounded-2xl border border-red-500/25 bg-red-500/10 flex items-center gap-3 text-red-400 text-sm">
         <i class="fa-solid fa-circle-exclamation text-lg"></i>
-        <span>خطأ: يرجى تحديد روم إرسال لوحة التذاكر أولاً قبل الضغط على الإرسال.</span>
+        <span>خطأ: يرجى تحديد روم إرسال لوحة التذاكر من القائمة المنسدلة قبل الإرسال.</span>
       </div>
     `;
   } else if (error === 'no_tickets') {
     alertHtml = `
-      <div class="mb-6 p-4 rounded-xl border border-red-500/20 bg-red-500/10 flex items-center gap-3 text-red-400 text-sm">
+      <div class="mb-6 p-4 rounded-2xl border border-red-500/25 bg-red-500/10 flex items-center gap-3 text-red-400 text-sm">
         <i class="fa-solid fa-circle-exclamation text-lg"></i>
         <span>خطأ: لا يمكن إرسال بنل تكت فارغ، يرجى إضافة تكتات وحفظها أولاً.</span>
       </div>
     `;
   } else if (error === 'channel_not_found') {
     alertHtml = `
-      <div class="mb-6 p-4 rounded-xl border border-red-500/20 bg-red-500/10 flex items-center gap-3 text-red-400 text-sm">
+      <div class="mb-6 p-4 rounded-2xl border border-red-500/25 bg-red-500/10 flex items-center gap-3 text-red-400 text-sm">
         <i class="fa-solid fa-circle-exclamation text-lg"></i>
         <span>خطأ: تعذر العثور على القناة المحددة في خوادم ديسكورد. تأكد من وجود الروم وصلاحيات البوت.</span>
       </div>
     `;
-  } else if (error === 'send_failed') {
+  } else if (error === 'missing_perms') {
     alertHtml = `
-      <div class="mb-6 p-4 rounded-xl border border-red-500/20 bg-red-500/10 flex items-center gap-3 text-red-400 text-sm">
+      <div class="mb-6 p-4 rounded-2xl border border-red-500/25 bg-red-500/10 flex items-center gap-3 text-red-400 text-sm">
         <i class="fa-solid fa-circle-exclamation text-lg"></i>
-        <span>خطأ داخلي: فشل في معالجة إرسال لوحة التذاكر. يرجى مراجعة الصلاحيات.</span>
+        <span>خطأ صلاحيات البوت: البوت يفتقد الصلاحيات التالية في الروم المحدد: <b class="text-white underline">${missingPerms}</b>. يرجى تفعيلها للبوت من إعدادات الروم بدقة ليعمل الإرسال.</span>
+      </div>
+    `;
+  } else if (error === 'internal_error') {
+    alertHtml = `
+      <div class="mb-6 p-4 rounded-2xl border border-red-500/25 bg-red-500/10 flex items-center gap-3 text-red-400 text-sm">
+        <i class="fa-solid fa-bug text-lg"></i>
+        <span>خطأ داخلي من الكود: <b class="text-white">${exceptionMsg}</b>. يرجى التحقق من لوحة Console في الاستضافة لقراءة تقرير الأخطاء بالتفصيل.</span>
       </div>
     `;
   }
