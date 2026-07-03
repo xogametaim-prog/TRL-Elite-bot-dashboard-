@@ -6,13 +6,12 @@ const { ChannelType, EmbedBuilder, ActionRowBuilder, ButtonBuilder, ButtonStyle 
 
 const app = express();
 
-// تفعيل ميزة الجلسات الدائمة لتفادي تسجيل الدخول والتحقق المتكرر (تحفظ الجلسة لمدة 7 أيام)
 app.use(session({
   secret: process.env.SESSION_SECRET || 'secret-dashboard-key-gold-123',
   resave: false,
   saveUninitialized: false,
   cookie: {
-    maxAge: 7 * 24 * 60 * 60 * 1000 // 7 أيام بالملي ثانية
+    maxAge: 7 * 24 * 60 * 60 * 1000 // مدة حفظ الجلسة 7 أيام لمنع التحقق المتكرر
   }
 }));
 
@@ -38,7 +37,6 @@ function startDashboard(client) {
     res.redirect('/login');
   }
 
-  // إذا كان العضو متحققاً بالفعل، فإنه يدخل اللوحة فوراً دون مصادقة مكررة
   app.get('/login', (req, res) => {
     if (req.session.user) {
       return res.redirect('/dashboard');
@@ -90,13 +88,13 @@ function startDashboard(client) {
 
   app.get('/', (req, res) => {
     const loginButton = req.session.user 
-      ? `<a href="/dashboard" class="px-8 py-3 rounded-full btn-gold text-black font-bold transition shadow-lg inline-block">الدخول للوحة التحكم</a>`
+      ? `<a href="/dashboard" class="px-8 py-3 rounded-full btn-gold text-black font-bold transition shadow-lg inline-block">الذهاب إلى لوحة التحكم</a>`
       : `<a href="/login" class="px-8 py-3 rounded-full btn-gold text-black font-bold transition shadow-lg inline-block">سجل دخولك الآن عبر Discord</a>`;
 
     res.send(renderBaseHtml("الرئيسية", `
       <div class="text-center py-24">
-        <h1 class="text-6xl font-black mb-6 glow-text tracking-wide">لوحة التحكم الفاخرة للديسكورد</h1>
-        <p class="text-slate-400 max-w-xl mx-auto mb-10 text-lg leading-relaxed">أدر أنظمتك بمفهوم تصميمي ذهبي ملكي متطور يدعم البث الإذاعي وتكامل التذاكر الفوري دون انقطاع.</p>
+        <h1 class="text-6xl font-black mb-6 glow-text tracking-wide">اللوحة الملكية للتذاكر</h1>
+        <p class="text-slate-400 max-w-xl mx-auto mb-10 text-lg leading-relaxed">تحكّم متكامل وسرعة عالية مصممة بأرقى خطوط وتناسقات الويب الحديثة لتجربة تفاعلية غير مسبوقة.</p>
         ${loginButton}
       </div>
     `, req.session.user));
@@ -125,7 +123,7 @@ function startDashboard(client) {
 
     res.send(renderBaseHtml("سيرفراتك", `
       <h2 class="text-4xl font-black mb-2 glow-text">اختر السيرفر المستهدف</h2>
-      <p class="text-slate-400">ابدأ في إدارة محتواك الرقمي بأسلوب مميز وسلس.</p>
+      <p class="text-slate-400">ابدأ في إدارة سيرفرك بأرقى هيكلية رقمية.</p>
       ${guildsHtml}
     `, req.session.user));
   });
@@ -161,7 +159,7 @@ function startDashboard(client) {
             <select name="logsChannel" class="w-full bg-black/60 border border-slate-800 focus:border-amber-500 rounded-xl p-3 text-white focus:outline-none transition">${logChannelOptions}</select>
           </div>
           <div>
-            <label class="block mb-2 text-slate-400 font-semibold">روم حفظ الأرشيف (Transcript Channel)</label>
+            <label class="block mb-2 text-slate-400 font-semibold">روم حفظ الترانسكريبت (Transcript Channel)</label>
             <select name="transcriptChannel" class="w-full bg-black/60 border border-slate-800 focus:border-amber-500 rounded-xl p-3 text-white focus:outline-none transition">${transChannelOptions}</select>
           </div>
         </div>
@@ -179,7 +177,7 @@ function startDashboard(client) {
       </form>
     `;
 
-    res.send(renderGuildLayout(guild, "general", content, req.session.user));
+    res.send(renderGuildLayout(guild, "general", content, req.session.user, req));
   });
 
   app.get('/dashboard/:guildId/tickets', checkAuth, (req, res) => {
@@ -352,45 +350,70 @@ function startDashboard(client) {
       </script>
     `;
 
-    res.send(renderGuildLayout(guild, "tickets", content, req.session.user));
+    res.send(renderGuildLayout(guild, "tickets", content, req.session.user, req));
   });
 
+  // معالجة وحفظ وإرسال بنل التكت للروم مع تقسيم الأزرار ديناميكياً
   app.post('/dashboard/:guildId/tickets/send-panel', checkAuth, async (req, res) => {
     const guild = client.guilds.cache.get(req.params.guildId);
     if (!guild) return res.send("السيرفر غير متوفر.");
 
-    const config = getGuildConfig(guild.id);
-    const targetChannel = guild.channels.cache.get(req.body.targetChannelId);
-
-    if (targetChannel && config.tickets && config.tickets.length > 0) {
-      try {
-        const embed = new EmbedBuilder()
-          .setTitle(config.general?.botName || "نظام التذاكر")
-          .setDescription("اختر نوع التذكرة لفتح تكت جديد والمتابعة مع الدعم الفني.")
-          .setColor('#d4af37');
-
-        const row = new ActionRowBuilder();
-        config.tickets.forEach(ticket => {
-          let style = ButtonStyle.Primary;
-          if (ticket.color === 'Secondary') style = ButtonStyle.Secondary;
-          if (ticket.color === 'Success') style = ButtonStyle.Success;
-          if (ticket.color === 'Danger') style = ButtonStyle.Danger;
-
-          row.addComponents(
-            new ButtonBuilder()
-              .setCustomId(`ticket_open_${ticket.id}`)
-              .setLabel(ticket.name)
-              .setEmoji(ticket.emoji || "📩")
-              .setStyle(style)
-          );
-        });
-
-        await targetChannel.send({ embeds: [embed], components: [row] });
-      } catch (err) {
-        console.error("Failed to send panel:", err);
-      }
+    const targetChannelId = req.body.targetChannelId;
+    if (!targetChannelId) {
+      return res.redirect(`/dashboard/${guild.id}/tickets?error=no_channel`);
     }
-    res.redirect(`/dashboard/${guild.id}/tickets`);
+
+    const config = getGuildConfig(guild.id);
+    if (!config.tickets || config.tickets.length === 0) {
+      return res.redirect(`/dashboard/${guild.id}/tickets?error=no_tickets`);
+    }
+
+    const targetChannel = guild.channels.cache.get(targetChannelId) || await guild.channels.fetch(targetChannelId).catch(() => null);
+    if (!targetChannel) {
+      return res.redirect(`/dashboard/${guild.id}/tickets?error=channel_not_found`);
+    }
+
+    try {
+      const embed = new EmbedBuilder()
+        .setTitle(config.general?.botName || "نظام التذاكر")
+        .setDescription("اختر نوع التذكرة لفتح تكت جديد والمتابعة مع الدعم الفني.")
+        .setColor('#d4af37');
+
+      // تقسيم الأزرار برمجياً لحظر أخطاء الانهيار
+      const rows = [];
+      let currentRow = new ActionRowBuilder();
+
+      config.tickets.forEach((ticket, idx) => {
+        let style = ButtonStyle.Primary;
+        if (ticket.color === 'Secondary') style = ButtonStyle.Secondary;
+        if (ticket.color === 'Success') style = ButtonStyle.Success;
+        if (ticket.color === 'Danger') style = ButtonStyle.Danger;
+
+        currentRow.addComponents(
+          new ButtonBuilder()
+            .setCustomId(`ticket_open_${ticket.id}`)
+            .setLabel(ticket.name)
+            .setEmoji(ticket.emoji || "📩")
+            .setStyle(style)
+        );
+
+        if ((idx + 1) % 5 === 0 || idx === config.tickets.length - 1) {
+          rows.push(currentRow);
+          currentRow = new ActionRowBuilder();
+        }
+      });
+
+      await targetChannel.send({ embeds: [embed], components: rows });
+
+      // تخزين روم الإرسال في قاعدة البيانات
+      config.general.ticketChannel = targetChannelId;
+      client.saveConfig();
+
+      return res.redirect(`/dashboard/${guild.id}/tickets?success=panel_sent`);
+    } catch (err) {
+      console.error("Error sending panel:", err);
+      return res.redirect(`/dashboard/${guild.id}/tickets?error=send_failed`);
+    }
   });
 
   app.get('/dashboard/:guildId/auto-reply', checkAuth, (req, res) => {
@@ -480,7 +503,7 @@ function startDashboard(client) {
                 <div>
                   <label class="block text-xs text-slate-400 mb-1">مكان العمل</label>
                   <select name="channel" class="w-full bg-black/60 border border-slate-800 focus:border-amber-500 rounded-lg p-2 text-white">
-                    \${generateChannelOptions()}
+                    \* \${generateChannelOptions()}
                   </select>
                 </div>
               </div>
@@ -498,10 +521,9 @@ function startDashboard(client) {
       </script>
     `;
 
-    res.send(renderGuildLayout(guild, "auto-reply", content, req.session.user));
+    res.send(renderGuildLayout(guild, "auto-reply", content, req.session.user, req));
   });
 
-  // صفحة نظام البث الإذاعي والرسائل الجماعية (Broadcast System) الفاخرة بالكامل
   app.get('/dashboard/:guildId/broadcast', checkAuth, (req, res) => {
     const guild = client.guilds.cache.get(req.params.guildId);
     if (!guild) return res.send("البوت ليس متواجداً في هذا السيرفر!");
@@ -513,7 +535,7 @@ function startDashboard(client) {
     const roleOptions = getRoleSelectOptions(roles);
 
     const content = `
-      <h2 class="text-3xl font-black mb-6 text-white border-b border-amber-500/20 pb-4">📢 نظام البث والإرسال الجماعي (Broadcast System)</h2>
+      <h2 class="text-3xl font-black mb-6 text-white border-b border-amber-500/20 pb-4">📢 نظام البث العام والرسائل الجماعية (Broadcast System)</h2>
       
       <form action="/dashboard/${guild.id}/broadcast/send" method="POST" class="space-y-6">
         <div class="glass p-8 rounded-3xl border border-slate-800 space-y-6">
@@ -537,7 +559,7 @@ function startDashboard(client) {
               <label class="block mb-2 text-slate-400 font-semibold">تحديد الفئة المستهدفة (Target Recipients)</label>
               <select name="targetType" class="w-full bg-black/60 border border-slate-800 focus:border-amber-500 rounded-xl p-3 text-white focus:outline-none transition">
                 <option value="all">جميع أعضاء السيرفر</option>
-                <option value="online">الأعضاء المتصلين فقط (Online / Idle / DND)</option>
+                <option value="online">الأعضاء المتصلين فقط (Online)</option>
                 <option value="offline">الأعضاء الأوفلاين فقط (Offline)</option>
                 <option value="hasRole">الأعضاء الذين يملكون رتبة معينة</option>
                 <option value="noRole">الأعضاء الذين لا يملكون رتبة معينة</option>
@@ -556,7 +578,7 @@ function startDashboard(client) {
               <label class="block mb-2 text-slate-400 font-semibold">صيغة وهيكل الرسالة</label>
               <select name="format" class="w-full bg-black/60 border border-slate-800 focus:border-amber-500 rounded-xl p-3 text-white focus:outline-none transition">
                 <option value="plain">رسالة عادية (Plain Text)</option>
-                <option value="embed">إمبد احترافي (Embed Message)</option>
+                <option value="embed">إمبد مخصص (Embed Message)</option>
               </select>
             </div>
             <div>
@@ -587,14 +609,13 @@ function startDashboard(client) {
           </div>
 
         </div>
-        <button type="submit" class="px-8 py-4 rounded-full btn-gold text-black font-black transition shadow-lg w-full text-lg">بدء إطلاق حملة البث الملكي (Start Broadcast)</button>
+        <button type="submit" class="px-8 py-4 rounded-full btn-gold text-black font-black transition shadow-lg w-full text-lg">بدء إطلاق حملة البث العام</button>
       </form>
     `;
 
-    res.send(renderGuildLayout(guild, "broadcast", content, req.session.user));
+    res.send(renderGuildLayout(guild, "broadcast", content, req.session.user, req));
   });
 
-  // معالجة حملة البث الجماعي وحظر الـ Rate Limit
   app.post('/dashboard/:guildId/broadcast/send', checkAuth, async (req, res) => {
     const guild = client.guilds.cache.get(req.params.guildId);
     if (!guild) return res.send("السيرفر غير متوفر.");
@@ -602,7 +623,6 @@ function startDashboard(client) {
     const { sendType, channelId, targetType, targetRoleId, format, mention, embedTitle, message, embedImage } = req.body;
 
     try {
-      // جلب وتحديث جميع الأعضاء لضمان دقة البيانات
       await guild.members.fetch();
 
       const targetMembers = guild.members.cache.filter(m => {
@@ -615,7 +635,6 @@ function startDashboard(client) {
         return true;
       });
 
-      // بناء محتوى البث الذكي
       let payload = {};
       if (format === 'plain') {
         payload.content = message;
@@ -630,7 +649,6 @@ function startDashboard(client) {
         payload.embeds = [embed];
       }
 
-      // الإرسال في روم محدد
       if (sendType === 'channel') {
         const chan = guild.channels.cache.get(channelId);
         if (chan) {
@@ -644,14 +662,12 @@ function startDashboard(client) {
           }
           await chan.send(payload);
         }
-      } 
-      // الإرسال الخاص (DM Broadcast) مع وقاية Rate Limit (ثانية واحدة بين كل رسالة)
-      else if (sendType === 'dm') {
+      } else if (sendType === 'dm') {
         (async () => {
           for (const [id, member] of targetMembers) {
             if (member.user.bot) continue;
             await member.send(payload).catch(() => {});
-            await new Promise(r => setTimeout(r, 1000)); // فاصل زمني لتجنب الباند والتقييد
+            await new Promise(r => setTimeout(r, 1000));
           }
         })();
       }
@@ -684,7 +700,7 @@ function startDashboard(client) {
               <h5 class="font-bold text-white">${g.prize}</h5>
               <p class="text-xs text-slate-400">ينتهي في: ${new Date(g.endAt).toLocaleString()} | الفائزون: ${g.winnersCount}</p>
             </div>
-            <a href="/dashboard/${guild.id}/giveaway/end/${g.messageId}" class="px-4 py-2 rounded-full border border-red-500/50 hover:bg-red-500/10 text-red-400 text-xs font-bold transition">إنهاء الآن (End Now)</a>
+            <a href="/dashboard/${guild.id}/giveaway/end/${g.messageId}" class="px-4 py-2 rounded-full border border-red-500/50 hover:bg-red-500/10 text-red-400 text-xs font-bold transition">إنهاء الآن</a>
           </div>
         `;
       }
@@ -780,7 +796,7 @@ function startDashboard(client) {
       </div>
     `;
 
-    res.send(renderGuildLayout(guild, "giveaway", content, req.session.user));
+    res.send(renderGuildLayout(guild, "giveaway", content, req.session.user, req));
   });
 
   app.post('/dashboard/:guildId/giveaway/start', checkAuth, async (req, res) => {
@@ -919,7 +935,7 @@ function startDashboard(client) {
       </form>
     `;
 
-    res.send(renderGuildLayout(guild, "welcome", content, req.session.user));
+    res.send(renderGuildLayout(guild, "welcome", content, req.session.user, req));
   });
 
   app.get('/dashboard/:guildId/auto-role', checkAuth, (req, res) => {
@@ -954,7 +970,7 @@ function startDashboard(client) {
       </form>
     `;
 
-    res.send(renderGuildLayout(guild, "auto-role", content, req.session.user));
+    res.send(renderGuildLayout(guild, "auto-role", content, req.session.user, req));
   });
 
   app.get('/dashboard/:guildId/embed-sender', checkAuth, (req, res) => {
@@ -1001,7 +1017,7 @@ function startDashboard(client) {
       </form>
     `;
 
-    res.send(renderGuildLayout(guild, "embed-sender", content, req.session.user));
+    res.send(renderGuildLayout(guild, "embed-sender", content, req.session.user, req));
   });
 
   app.post('/dashboard/:guildId/save-general', checkAuth, (req, res) => {
@@ -1159,7 +1175,7 @@ function renderBaseHtml(title, body, user) {
       <img src="https://cdn.discordapp.com/avatars/${user.id}/${user.avatar}.png" class="w-10 h-10 rounded-full" />
       <div class="text-right">
         <h5 class="text-sm font-bold text-white">${user.username}</h5>
-        <a href="/logout" class="text-xs text-red-500 hover:text-red-400">تسجيل الخروج</a>
+        <a href="/logout" class="text-xs text-red-500 hover:text-red-400 font-semibold">تسجيل الخروج</a>
       </div>
     </div>
   ` : `<a href="/login" class="px-6 py-3 rounded-full btn-gold text-black font-black text-sm transition shadow-lg inline-block">تسجيل دخول</a>`;
@@ -1218,10 +1234,52 @@ function renderBaseHtml(title, body, user) {
   `;
 }
 
-function renderGuildLayout(guild, activePage, content, user) {
+function renderGuildLayout(guild, activePage, content, user, req) {
   const config = getGuildConfig(guild.id);
   const botLogo = config.general?.botLogo || guild.iconURL() || 'https://cdn.discordapp.com/embed/avatars/0.png';
   const botName = config.general?.botName || guild.name;
+
+  // بناء هيكلية لافتات النجاح والخطأ في الداشبورد تلقائياً
+  const success = req ? req.query.success : null;
+  const error = req ? req.query.error : null;
+  let alertHtml = '';
+
+  if (success === 'panel_sent') {
+    alertHtml = `
+      <div class="mb-6 p-4 rounded-xl border border-emerald-500/20 bg-emerald-500/10 flex items-center gap-3 text-emerald-400 text-sm">
+        <i class="fa-solid fa-circle-check text-lg"></i>
+        <span>تم إرسال لوحة التذاكر بنجاح إلى القناة المحددة وحفظ الإعدادات!</span>
+      </div>
+    `;
+  } else if (error === 'no_channel') {
+    alertHtml = `
+      <div class="mb-6 p-4 rounded-xl border border-red-500/20 bg-red-500/10 flex items-center gap-3 text-red-400 text-sm">
+        <i class="fa-solid fa-circle-exclamation text-lg"></i>
+        <span>خطأ: يرجى تحديد روم إرسال لوحة التذاكر أولاً قبل الضغط على الإرسال.</span>
+      </div>
+    `;
+  } else if (error === 'no_tickets') {
+    alertHtml = `
+      <div class="mb-6 p-4 rounded-xl border border-red-500/20 bg-red-500/10 flex items-center gap-3 text-red-400 text-sm">
+        <i class="fa-solid fa-circle-exclamation text-lg"></i>
+        <span>خطأ: لا يمكن إرسال بنل تكت فارغ، يرجى إضافة تكتات وحفظها أولاً.</span>
+      </div>
+    `;
+  } else if (error === 'channel_not_found') {
+    alertHtml = `
+      <div class="mb-6 p-4 rounded-xl border border-red-500/20 bg-red-500/10 flex items-center gap-3 text-red-400 text-sm">
+        <i class="fa-solid fa-circle-exclamation text-lg"></i>
+        <span>خطأ: تعذر العثور على القناة المحددة في خوادم ديسكورد. تأكد من وجود الروم وصلاحيات البوت.</span>
+      </div>
+    `;
+  } else if (error === 'send_failed') {
+    alertHtml = `
+      <div class="mb-6 p-4 rounded-xl border border-red-500/20 bg-red-500/10 flex items-center gap-3 text-red-400 text-sm">
+        <i class="fa-solid fa-circle-exclamation text-lg"></i>
+        <span>خطأ داخلي: فشل في معالجة إرسال لوحة التذاكر. يرجى مراجعة الصلاحيات.</span>
+      </div>
+    `;
+  }
 
   const menuItems = [
     { id: 'general', label: '⚙️ الإعدادات العامة', link: `/dashboard/${guild.id}` },
@@ -1260,6 +1318,7 @@ function renderGuildLayout(guild, activePage, content, user) {
       </aside>
 
       <section class="flex-grow w-full md:w-3/4 glass p-8 md:p-10 rounded-3xl border border-slate-800">
+        ${alertHtml}
         ${content}
       </section>
     </div>
