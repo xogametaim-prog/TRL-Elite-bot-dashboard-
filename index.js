@@ -24,7 +24,7 @@ const client = new Client({
   partials: [Partials.Channel, Partials.Message, Partials.User]
 });
 
-// تحميل الإعدادات من config.json
+// تحميل الإعدادات من config.json بشكل آمن
 let config = { guilds: {} };
 if (fs.existsSync('./config.json')) {
   try {
@@ -35,16 +35,14 @@ if (fs.existsSync('./config.json')) {
 }
 client.config = config;
 
-// حفظ الإعدادات تلقائياً
+// دالة حفظ الإعدادات في config.json
 client.saveConfig = () => {
   fs.writeFileSync('./config.json', JSON.stringify(client.config, null, 2));
 };
 
-// تشغيل اللوحة عند بدء تشغيل البوت
 client.on('ready', async () => {
   console.log(`[BOT] Logged in as ${client.user.tag}`);
   
-  // تسجيل الأوامر البرمجية (Slash Commands)
   const commands = [
     {
       name: 'setup-ticket',
@@ -71,7 +69,6 @@ client.on('ready', async () => {
   startDashboard(client);
 });
 
-// ميكانيكية استلام اللوق (Logs)
 async function sendLog(guild, embed) {
   const guildConfig = client.config.guilds[guild.id];
   if (!guildConfig || !guildConfig.general?.logsChannel) return;
@@ -81,7 +78,7 @@ async function sendLog(guild, embed) {
   }
 }
 
-// الفعاليات عند انضمام عضو جديد (Welcome & Auto Role)
+// فعاليات انضمام الأعضاء (Welcome & Auto Role)
 client.on('guildMemberAdd', async (member) => {
   const guildConfig = client.config.guilds[member.guild.id];
   if (!guildConfig) return;
@@ -98,30 +95,31 @@ client.on('guildMemberAdd', async (member) => {
   if (guildConfig.welcome?.enabled && guildConfig.welcome?.channelId) {
     const channel = member.guild.channels.cache.get(guildConfig.welcome.channelId);
     if (channel) {
-      try {
-        const welcomeText = (guildConfig.welcome.message || "Welcome to the server, {user}!")
-          .replace('{user}', `<@${member.id}>`)
-          .replace('{server}', member.guild.name)
-          .replace('{count}', member.guild.memberCount);
+      const welcomeText = (guildConfig.welcome.message || "Welcome to the server, {user}!")
+        .replace('{user}', `<@${member.id}>`)
+        .replace('{server}', member.guild.name)
+        .replace('{count}', member.guild.memberCount);
 
-        // إنشاء بطاقة الترحيب (Welcome Card) عبر Canvas
+      let payload = { content: welcomeText };
+      if (guildConfig.welcome.mentionUser) {
+        payload.content = `<@${member.id}>\n${welcomeText}`;
+      }
+
+      try {
         const canvas = createCanvas(800, 350);
         const ctx = canvas.getContext('2d');
 
-        // خلفية داكنة متدرجة
         const gradient = ctx.createLinearGradient(0, 0, 800, 350);
         gradient.addColorStop(0, '#0f172a');
         gradient.addColorStop(1, '#1e1b4b');
         ctx.fillStyle = gradient;
         ctx.fillRect(0, 0, 800, 350);
 
-        // دائرة خلفية للأفاتار
         ctx.beginPath();
         ctx.arc(400, 110, 75, 0, Math.PI * 2);
         ctx.fillStyle = '#4f46e5';
         ctx.fill();
 
-        // رسم صورة الأفاتار
         try {
           const avatarUrl = member.user.displayAvatarURL({ extension: 'png', size: 256 });
           const avatar = await loadImage(avatarUrl);
@@ -131,9 +129,14 @@ client.on('guildMemberAdd', async (member) => {
           ctx.clip();
           ctx.drawImage(avatar, 330, 40, 140, 140);
           ctx.restore();
-        } catch (_) {}
+        } catch (avatarError) {
+          console.error("Failed to load user avatar in index.js, falling back to clean circle:", avatarError);
+          ctx.beginPath();
+          ctx.arc(400, 110, 60, 0, Math.PI * 2);
+          ctx.fillStyle = '#312e81';
+          ctx.fill();
+        }
 
-        // نصوص البطاقة الترحيبية
         ctx.font = 'bold 32px sans-serif';
         ctx.fillStyle = '#ffffff';
         ctx.textAlign = 'center';
@@ -148,30 +151,22 @@ client.on('guildMemberAdd', async (member) => {
         ctx.fillText(`Member #${member.guild.memberCount}`, 400, 315);
 
         const attachment = new AttachmentBuilder(canvas.toBuffer('image/png'), { name: 'welcome.png' });
-        const payload = { files: [attachment] };
-        if (guildConfig.welcome.mentionUser) {
-          payload.content = `<@${member.id}>`;
-        }
-        if (welcomeText) {
-          payload.content = (payload.content ? payload.content + '\n' : '') + welcomeText;
-        }
-
-        channel.send(payload).catch(() => {});
-      } catch (err) {
-        console.error("Welcome system error:", err);
+        payload.files = [attachment];
+      } catch (canvasErr) {
+        console.error("Canvas generation failed in index.js, rendering pure text instead:", canvasErr);
       }
+
+      channel.send(payload).catch((err) => console.error("Error sending welcome message:", err));
     }
   }
 });
 
-// الفعاليات الخاصة بنظام الردود التلقائية واللوق للرسائل
 client.on('messageCreate', async (message) => {
   if (message.author.bot || !message.guild) return;
 
   const guildConfig = client.config.guilds[message.guild.id];
   if (!guildConfig) return;
 
-  // نظام الردود التلقائية (Auto Reply)
   if (guildConfig.autoReplies && Array.isArray(guildConfig.autoReplies)) {
     const match = guildConfig.autoReplies.find(r => 
       r.enabled && 
@@ -185,7 +180,6 @@ client.on('messageCreate', async (message) => {
   }
 });
 
-// تسجيل عمليات تعديل وحذف الرسائل (Logs)
 client.on('messageDelete', async (message) => {
   if (!message.guild || message.author?.bot) return;
   const embed = new EmbedBuilder()
@@ -215,12 +209,10 @@ client.on('messageUpdate', async (oldMessage, newMessage) => {
   sendLog(oldMessage.guild, embed);
 });
 
-// التعامل مع أوامر السلاش (Slash Commands) والتفاعل مع الأزرار
 client.on('interactionCreate', async (interaction) => {
   if (!interaction.guild) return;
   const guildConfig = client.config.guilds[interaction.guild.id];
 
-  // تشغيل أوامر السلاش
   if (interaction.isChatInputCommand()) {
     const { commandName } = interaction;
 
@@ -318,7 +310,6 @@ client.on('interactionCreate', async (interaction) => {
     }
   }
 
-  // التفاعل مع الأزرار (فتح تكت، Claim، إغلاق)
   if (interaction.isButton()) {
     const customId = interaction.customId;
 
@@ -331,7 +322,6 @@ client.on('interactionCreate', async (interaction) => {
         return interaction.editReply({ content: '❌ حدث خطأ في الحصول على نوع هذه التذكرة.' });
       }
 
-      // التحقق من الحد الأقصى للتذاكر المفتوحة (Max Tickets per User)
       const maxTickets = parseInt(guildConfig.maxTickets || '4');
       const currentTickets = interaction.guild.channels.cache.filter(c => 
         c.name.includes('ticket-') && 
@@ -346,7 +336,6 @@ client.on('interactionCreate', async (interaction) => {
         .replace('{user}', interaction.user.username)
         .toLowerCase();
 
-      // تحديد الأذونات (Permissions)
       const permissionOverwrites = [
         {
           id: interaction.guild.roles.everyone.id,
@@ -375,13 +364,11 @@ client.on('interactionCreate', async (interaction) => {
         permissionOverwrites: permissionOverwrites
       });
 
-      // منشن الرتبة المحددة إن وجدت
       const pingString = ticketType.mentionRole ? `<@&${ticketType.mentionRole}>` : '';
       if (pingString) {
         await ticketChannel.send(pingString).then(m => m.delete().catch(() => {}));
       }
 
-      // تصميم رسالة الترحيب بالتكت الجديد
       const welcomeEmbed = new EmbedBuilder()
         .setTitle(`مرحبًا بك في تذكرة ${ticketType.name}`)
         .setDescription(ticketType.welcomeMessage || "الرجاء كتابة مشكلتك هنا وسيقوم الفريق المختص بمساعدتك قريباً.")
@@ -404,7 +391,6 @@ client.on('interactionCreate', async (interaction) => {
       await ticketChannel.send({ content: `<@${interaction.user.id}>`, embeds: [welcomeEmbed], components: [row] });
       await interaction.editReply({ content: `✅ تم إنشاء تذكرتك بنجاح: <#${ticketChannel.id}>` });
 
-      // إرسال اللوق
       const logEmbed = new EmbedBuilder()
         .setTitle("🔓 تكت مفتوح جديد")
         .setColor('#10b981')
@@ -426,7 +412,6 @@ client.on('interactionCreate', async (interaction) => {
       await interaction.channel.setTopic(`${topic} | claimed:${interaction.user.id}`);
       await interaction.reply({ content: `✅ تم استلام هذا التكت بواسطة <@${interaction.user.id}>` });
 
-      // حظر الآخرين من استلام التكت (اختياري)
       const logEmbed = new EmbedBuilder()
         .setTitle("🙋‍♂️ تكت مستلم")
         .setColor('#6366f1')
@@ -459,7 +444,6 @@ client.on('interactionCreate', async (interaction) => {
     if (customId === 'ticket_close_yes') {
       await interaction.reply({ content: '⏳ جاري تصدير الأرشيف وإغلاق التكت...' });
 
-      // استخراج الـ Transcript (الأرشيف)
       const messages = await interaction.channel.messages.fetch({ limit: 100 });
       let transcriptHtml = `
       <!DOCTYPE html>
@@ -496,7 +480,6 @@ client.on('interactionCreate', async (interaction) => {
       transcriptHtml += `</body></html>`;
       const attachment = new AttachmentBuilder(Buffer.from(transcriptHtml, 'utf-8'), { name: `transcript-${interaction.channel.name}.html` });
 
-      // إرسال الأرشيف لقناة اللوق
       const logEmbed = new EmbedBuilder()
         .setTitle("🔒 تكت مغلق")
         .setColor('#ef4444')
@@ -513,7 +496,6 @@ client.on('interactionCreate', async (interaction) => {
         }
       }
 
-      // حذف الروم بعد 5 ثوانٍ
       setTimeout(() => {
         interaction.channel.delete().catch(() => {});
       }, 5000);
@@ -521,5 +503,4 @@ client.on('interactionCreate', async (interaction) => {
   }
 });
 
-// تشغيل البوت عبر الـ Token المخزن في البيئة
 client.login(process.env.DISCORD_TOKEN);
