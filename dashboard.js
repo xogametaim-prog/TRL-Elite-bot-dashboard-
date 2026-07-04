@@ -11,7 +11,7 @@ app.use(session({
   resave: false,
   saveUninitialized: false,
   cookie: {
-    maxAge: 7 * 24 * 60 * 60 * 1000 // حفظ الجلسة لمدة 7 أيام متواصلة لمنع التحقق المكرر
+    maxAge: 7 * 24 * 60 * 60 * 1000 // مدة حفظ الجلسة 7 أيام متواصلة لمنع التحقق المكرر
   }
 }));
 
@@ -22,6 +22,34 @@ function normalizeArray(val) {
   if (!val) return [];
   if (Array.isArray(val)) return val;
   return [val];
+}
+
+// دالة ذكية لفحص وتصفية الإيموجي وتفادي أخطاء الـ Discord API
+function parseAndValidateEmoji(emojiInput) {
+  if (!emojiInput || typeof emojiInput !== 'string') return null;
+  const trimmed = emojiInput.trim();
+  if (!trimmed) return null;
+
+  // 1. التقاط إيموجي ديسكورد المخصص واستخلاص المعرف الرقمي ID الصافي
+  const customEmojiRegex = /^<a?:([a-zA-Z0-9_~]+):(\d+)>$/;
+  const matchCustom = trimmed.match(customEmojiRegex);
+  if (matchCustom) {
+    return matchCustom[2];
+  }
+
+  // 2. التحقق مما إذا كان المدخل عبارة عن ID رقمي صافي
+  const numericRegex = /^\d+$/;
+  if (numericRegex.test(trimmed)) {
+    return trimmed;
+  }
+
+  // 3. التحقق من وجود رمز تعبيري Unicode قياسي لضمان عدم تمرير نصوص عادية
+  const unicodeEmojiRegex = /(\u00a9|\u00ae|[\u2000-\u3300]|\ud83c[\ud000-\udfff]|\ud83d[\ud000-\udfff]|\ud83e[\ud000-\udfff])/;
+  if (unicodeEmojiRegex.test(trimmed)) {
+    return trimmed;
+  }
+
+  return null;
 }
 
 function startDashboard(client) {
@@ -111,7 +139,7 @@ function startDashboard(client) {
 
     res.send(renderBaseHtml("الرئيسية", `
       <div class="text-center py-24">
-        <h1 class="text-6xl font-black mb-6 glow-text tracking-wide text-white">اللوحة الملكية للتذاكر</h1>
+        <h1 class="text-6xl font-black mb-6 glow-text tracking-wide text-white font-sans">اللوحة الملكية للديسكورد</h1>
         <p class="text-slate-400 max-w-xl mx-auto mb-10 text-lg leading-relaxed">تحكّم متكامل وسرعة عالية مصممة بأرقى خطوط وتناسقات الويب الحديثة لتجربة تفاعلية غير مسبوقة.</p>
         ${loginButton}
       </div>
@@ -127,7 +155,7 @@ function startDashboard(client) {
       const guildIcon = g.icon ? `https://cdn.discordapp.com/icons/${g.id}/${g.icon}.png` : 'https://cdn.discordapp.com/embed/avatars/0.png';
       guildsHtml += `
         <div class="glass p-8 rounded-3xl flex flex-col items-center justify-between text-center card-glow transition">
-          <img src="${guildIcon}" class="w-24 h-24 rounded-full mb-6 ring-4 ring-amber-500/25" />
+          <img src="${guildIcon}" class="w-24 h-24 rounded-full mb-6 ring-4 ring-amber-500/25 shadow-lg" />
           <h3 class="font-black text-2xl mb-6 text-white">${g.name}</h3>
           ${isBotIn ? `
             <a href="/dashboard/${g.id}" class="px-6 py-3 rounded-full btn-gold text-black font-bold transition w-full text-center">تعديل الإعدادات</a>
@@ -218,7 +246,7 @@ function startDashboard(client) {
       const catOptions = getSelectOptions(channels, ChannelType.GuildCategory, ticket.category);
       ticketsHtml += `
         <div class="glass p-6 rounded-2xl border border-slate-800 space-y-4 mb-6 ticket-card">
-          <div class="flex justify-between items-center">
+          <div class="flex justify-between items-center border-b border-slate-800/50 pb-3">
             <h4 class="font-bold text-lg text-amber-400 card-title">تذكرة: ${ticket.name}</h4>
             <button type="button" onclick="this.closest('.ticket-card').remove();" class="text-red-500 hover:text-red-400 transition font-medium text-sm"><i class="fa-solid fa-trash"></i> إزالة</button>
           </div>
@@ -229,7 +257,7 @@ function startDashboard(client) {
               <input type="text" name="name" value="${ticket.name}" class="w-full bg-black/60 border border-slate-800 focus:border-amber-500 rounded-lg p-2 text-white" required />
             </div>
             <div>
-              <label class="block text-xs text-slate-400 mb-1">Emoji</label>
+              <label class="block text-xs text-slate-400 mb-1">Emoji (Unicode أو مخصص)</label>
               <input type="text" name="emoji" value="${ticket.emoji || '📩'}" class="w-full bg-black/60 border border-slate-800 focus:border-amber-500 rounded-lg p-2 text-white" />
             </div>
             <div>
@@ -265,17 +293,17 @@ function startDashboard(client) {
     });
 
     const content = `
-      <div class="glass p-6 rounded-2xl border border-slate-800 mb-8">
+      <div class="glass p-8 rounded-3xl border border-slate-800 mb-8 shadow-xl">
         <h3 class="text-xl font-bold mb-2 text-amber-400">📤 إرسال لوحة التذاكر (Send Ticket Panel)</h3>
-        <p class="text-xs text-slate-400 mb-4">اختر الروم المناسب من القائمة ثم اضغط على زر إرسال لإطلاق لوحة التذاكر في سيرفرك مباشرة.</p>
+        <p class="text-xs text-slate-400 mb-4 font-medium">اختر الروم المناسب من القائمة ثم اضغط على زر إرسال لإطلاق لوحة التذاكر في سيرفرك مباشرة.</p>
         <form action="/dashboard/${guild.id}/tickets/send-panel" method="POST" class="flex flex-col md:flex-row gap-4 items-end">
-          <div class="flex-grow">
-            <label class="block text-xs text-slate-400 mb-1">روم الإرسال المستهدف</label>
-            <select name="targetChannelId" class="w-full bg-black/60 border border-slate-800 focus:border-amber-500 rounded-lg p-3 text-white" required>
+          <div class="flex-grow w-full">
+            <label class="block text-xs text-slate-400 mb-1 font-semibold">روم الإرسال المستهدف</label>
+            <select name="targetChannelId" class="w-full bg-black/60 border border-slate-800 focus:border-amber-500 rounded-xl p-3 text-white" required>
               ${sendPanelChannelOptions}
             </select>
           </div>
-          <button type="submit" class="px-6 py-3 rounded-full btn-gold text-black font-black transition shadow-lg">إرسال اللوحة الآن</button>
+          <button type="submit" class="px-8 py-3 rounded-full btn-gold text-black font-black transition shadow-lg w-full md:w-auto text-center">إرسال اللوحة الآن</button>
         </form>
       </div>
 
@@ -315,7 +343,7 @@ function startDashboard(client) {
           const id = 'ticket_' + Date.now();
           const cardHtml = \`
             <div class="glass p-6 rounded-2xl border border-slate-800 space-y-4 mb-6 ticket-card">
-              <div class="flex justify-between items-center">
+              <div class="flex justify-between items-center border-b border-slate-800/50 pb-3">
                 <h4 class="font-bold text-lg text-amber-400 card-title">تذكرة جديدة</h4>
                 <button type="button" onclick="this.closest('.ticket-card').remove();" class="text-red-500 hover:text-red-400 transition font-medium text-sm"><i class="fa-solid fa-trash"></i> إزالة</button>
               </div>
@@ -326,7 +354,7 @@ function startDashboard(client) {
                   <input type="text" name="name" class="w-full bg-black/60 border border-slate-800 focus:border-amber-500 rounded-lg p-2 text-white" required />
                 </div>
                 <div>
-                  <label class="block text-xs text-slate-400 mb-1">Emoji</label>
+                  <label class="block text-xs text-slate-400 mb-1">Emoji (Unicode أو مخصص)</label>
                   <input type="text" name="emoji" value="📩" class="w-full bg-black/60 border border-slate-800 focus:border-amber-500 rounded-lg p-2 text-white" />
                 </div>
                 <div>
@@ -371,7 +399,7 @@ function startDashboard(client) {
     res.send(renderGuildLayout(guild, "tickets", content, req.session.user, req));
   });
 
-  // معالجة وإرسال لوحة التذاكر برمجياً مع تحليل صلاحيات البوت التلقائي
+  // معالجة وحفظ وإرسال بنل التكت للروم مع تقسيم الأزرار ديناميكياً وفحص الإيموجيات مسبقاً
   app.post('/dashboard/:guildId/tickets/send-panel', checkAuth, checkGuildAdmin, async (req, res) => {
     const guild = client.guilds.cache.get(req.params.guildId);
     if (!guild) return res.send("السيرفر غير متوفر.");
@@ -407,6 +435,8 @@ function startDashboard(client) {
       return res.redirect(`/dashboard/${guild.id}/tickets?error=missing_perms&perms=${encodeURIComponent(missingPerms.join(' و '))}`);
     }
 
+    let hasInvalidEmojiWarning = false;
+
     try {
       const embed = new EmbedBuilder()
         .setTitle(config.general?.botName || "نظام التذاكر")
@@ -424,21 +454,20 @@ function startDashboard(client) {
         if (ticket.color === 'Success') style = ButtonStyle.Success;
         if (ticket.color === 'Danger') style = ButtonStyle.Danger;
 
-        // معالجة وتأمين الإيموجي المخصص تفادياً لأخطاء الـ Validation
-        let buttonEmoji = ticket.emoji || "📩";
-        const customEmojiRegex = /<?a?:?([^:\s]+):(\d+)>?/;
-        const match = buttonEmoji.match(customEmojiRegex);
-        if (match) {
-          buttonEmoji = match[2]; // استخدام الـ ID لضمان القبول الفوري في واجهة ديسكورد
+        const button = new ButtonBuilder()
+          .setCustomId(`ticket_open_${ticket.id}`)
+          .setLabel(ticket.name)
+          .setStyle(style);
+
+        // تصفية وتحليل الإيموجي ديناميكياً لتفادي استثناء الـ API الحاد
+        const buttonEmoji = parseAndValidateEmoji(ticket.emoji);
+        if (buttonEmoji) {
+          button.setEmoji(buttonEmoji);
+        } else if (ticket.emoji && ticket.emoji.trim() !== "") {
+          hasInvalidEmojiWarning = true; // تم رصد وتصفية قيمة نصية أو تعبيرية غير متوافقة
         }
 
-        currentRow.addComponents(
-          new ButtonBuilder()
-            .setCustomId(`ticket_open_${ticket.id}`)
-            .setLabel(ticket.name)
-            .setEmoji(buttonEmoji)
-            .setStyle(style)
-        );
+        currentRow.addComponents(button);
 
         if ((idx + 1) % 5 === 0 || idx === validTickets.length - 1) {
           rows.push(currentRow);
@@ -448,13 +477,17 @@ function startDashboard(client) {
 
       await targetChannel.send({ embeds: [embed], components: rows });
 
+      // تخزين روم الإرسال في قاعدة البيانات
       config.general.ticketChannel = targetChannelId;
       client.saveConfig();
 
-      return res.redirect(`/dashboard/${guild.id}/tickets?success=panel_sent`);
+      if (hasInvalidEmojiWarning) {
+        return res.redirect(`/dashboard/${guild.id}/tickets?success=panel_sent_warn`);
+      } else {
+        return res.redirect(`/dashboard/${guild.id}/tickets?success=panel_sent`);
+      }
     } catch (err) {
       console.error("[TICKET PANEL SEND ERROR] Crash trace captured inside Node:", err);
-      // تمرير الخطأ الحقيقي المباشر تفادياً للأقنعة البرمجية
       return res.redirect(`/dashboard/${guild.id}/tickets?error=internal_error&msg=${encodeURIComponent(err.message)}`);
     }
   });
@@ -1071,11 +1104,11 @@ function startDashboard(client) {
           </div>
           <div class="grid grid-cols-1 md:grid-cols-2 gap-6">
             <div>
-              <label class="block mb-2 text-slate-400">الصورة الكبيرة (Image URL)</label>
+              <label class="block mb-2 text-slate-400 font-semibold">الصورة الكبيرة (Image URL)</label>
               <input type="text" name="image" class="w-full bg-black/60 border border-slate-800 focus:border-amber-500 rounded-lg p-3 text-white" />
             </div>
             <div>
-              <label class="block mb-2 text-slate-400">الصورة الصغيرة (Thumbnail URL)</label>
+              <label class="block mb-2 text-slate-400 font-semibold">الصورة الصغيرة (Thumbnail URL)</label>
               <input type="text" name="thumbnail" class="w-full bg-black/60 border border-slate-800 focus:border-amber-500 rounded-lg p-3 text-white" />
             </div>
           </div>
@@ -1121,7 +1154,7 @@ function startDashboard(client) {
       updatedTickets.push({
         id: ids[i] || `ticket_${Date.now()}_${i}`,
         name: names[i],
-        emoji: emojis[i] || '📩',
+        emoji: emojis[i],
         color: colors[i] || 'Primary',
         mentionRole: roles[i] || '',
         category: categories[i] || '',
@@ -1133,42 +1166,6 @@ function startDashboard(client) {
     config.tickets = updatedTickets;
     client.saveConfig();
     res.redirect(`/dashboard/${req.params.guildId}/tickets`);
-  });
-
-  app.post('/dashboard/:guildId/auto-reply/save', checkAuth, checkGuildAdmin, (req, res) => {
-    const config = getGuildConfig(req.params.guildId);
-    
-    const keywords = normalizeArray(req.body.keyword);
-    const replies = normalizeArray(req.body.reply);
-    const channels = normalizeArray(req.body.channel);
-    const enableds = normalizeArray(req.body.enabled);
-
-    const updatedReplies = [];
-    for (let i = 0; i < keywords.length; i++) {
-      if (!keywords[i]) continue;
-      updatedReplies.push({
-        keyword: keywords[i],
-        reply: replies[i],
-        channel: channels[i] || 'all',
-        enabled: enableds[i] === 'true'
-      });
-    }
-
-    config.autoReplies = updatedReplies;
-    client.saveConfig();
-    res.redirect(`/dashboard/${req.params.guildId}/auto-reply`);
-  });
-
-  app.post('/dashboard/:guildId/welcome/save', checkAuth, checkGuildAdmin, (req, res) => {
-    const config = getGuildConfig(req.params.guildId);
-    config.welcome = {
-      enabled: req.body.enabled === 'true',
-      channelId: req.body.channelId,
-      mentionUser: req.body.mentionUser === 'true',
-      message: req.body.message
-    };
-    client.saveConfig();
-    res.redirect(`/dashboard/${req.params.guildId}/welcome`);
   });
 
   app.post('/dashboard/:guildId/auto-role/save', checkAuth, checkGuildAdmin, (req, res) => {
@@ -1319,6 +1316,13 @@ function renderGuildLayout(guild, activePage, content, user, req) {
         <span>تم إرسال لوحة التذاكر بنجاح إلى القناة المحددة وحفظ إعدادات القناة!</span>
       </div>
     `;
+  } else if (success === 'panel_sent_warn') {
+    alertHtml = `
+      <div class="mb-6 p-4 rounded-2xl border border-amber-500/25 bg-amber-500/10 flex items-center gap-3 text-amber-400 text-sm">
+        <i class="fa-solid fa-triangle-exclamation text-lg"></i>
+        <span>تم إرسال لوحة التذاكر بنجاح! (تنبيه: تم تجاوز بعض الرموز التعبيرية أو النصوص المدخلة في حقل الإيموجي لكونها غير صالحة، وذلك لحماية لوحة التكت من التعطل).</span>
+      </div>
+    `;
   } else if (error === 'no_channel') {
     alertHtml = `
       <div class="mb-6 p-4 rounded-2xl border border-red-500/25 bg-red-500/10 flex items-center gap-3 text-red-400 text-sm">
@@ -1351,7 +1355,7 @@ function renderGuildLayout(guild, activePage, content, user, req) {
     alertHtml = `
       <div class="mb-6 p-4 rounded-2xl border border-red-500/25 bg-red-500/10 flex items-center gap-3 text-red-400 text-sm">
         <i class="fa-solid fa-bug text-lg"></i>
-        <span>خطأ داخلي من الكود: <b class="text-white">${exceptionMsg}</b>. يرجى التحقق من لوحة Console في الاستضافة لقراءة تقرير الأخطاء بالتفصيل.</span>
+        <span>خطأ داخلي من الكود: <b class="text-white">${exceptionMsg}</b>. يرجى مراجعة وتعديل قيم الإيموجيات أو الحقول المدخلة، والتحقق من سجلات الـ Console.</span>
       </div>
     `;
   }
