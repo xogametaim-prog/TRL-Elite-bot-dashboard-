@@ -6,17 +6,116 @@ const { ChannelType, EmbedBuilder, ActionRowBuilder, ButtonBuilder, ButtonStyle,
 
 const app = express();
 
+// إعداد الجلسة بحفظ مستمر لمدة 7 أيام متواصلة (تفادياً للتحقق المتكرر)
 app.use(session({
-  secret: process.env.SESSION_SECRET || 'secret-dashboard-key-gold-123',
+  secret: process.env.SESSION_SECRET || 'secret-dashboard-key-gold-luxury-123',
   resave: false,
   saveUninitialized: false,
   cookie: {
-    maxAge: 7 * 24 * 60 * 60 * 1000 // مدة حفظ الجلسة 7 أيام متواصلة لمنع التحقق المكرر
+    maxAge: 7 * 24 * 60 * 60 * 1000 // 7 أيام كاملة
   }
 }));
 
 app.use(express.urlencoded({ extended: true }));
 app.use(express.json());
+
+// مفسر اللغات المحلي الفاخر (EN, AR, FR)
+const locales = {
+  en: {
+    general_settings: "General Settings",
+    ticket_panels: "Ticket Panels",
+    auto_reply: "Auto Reply",
+    broadcast: "Broadcast System",
+    giveaways: "Giveaways Manager",
+    welcome_system: "Welcome System",
+    auto_role: "Auto Role Onboarding",
+    reaction_roles: "Reaction Roles",
+    embed_sender: "Embed Sender",
+    save_btn: "Save Configuration",
+    add_btn: "Add New Card",
+    choose_guild: "Select Target Server",
+    support_srv: "Join Support Server",
+    choose_lang: "Language",
+    add_bot: "Add Bot",
+    dashboard: "Dashboard",
+    logout: "Logout",
+    panel_title: "Panel Configuration",
+    panel_name_placeholder: "Enter Panel Name...",
+    create_panel_btn: "Create Panel",
+    send_btn: "Send / Publish",
+    edit_btn: "Edit",
+    delete_btn: "Delete",
+    duplicate_btn: "Duplicate",
+    active_panels: "Active Saved Panels",
+    no_panels: "No ticket panels saved yet. Start by creating one above.",
+    auto_messages: "Auto Messages",
+    add_auto_message: "Create Scheduled Announcement"
+  },
+  ar: {
+    general_settings: "الإعدادات العامة",
+    ticket_panels: "لوحات التذاكر",
+    auto_reply: "الردود التلقائية",
+    broadcast: "نظام البث العام",
+    giveaways: "إدارة السحوبات",
+    welcome_system: "نظام الترحيب",
+    auto_role: "الرتب التلقائية",
+    reaction_roles: "رتب التفاعل",
+    embed_sender: "مرسل الإمبد",
+    save_btn: "حفظ الإعدادات",
+    add_btn: "إضافة بطاقة جديدة",
+    choose_guild: "اختر السيرفر المستهدف",
+    support_srv: "سيرفر الدعم الفني",
+    choose_lang: "اللغة",
+    add_bot: "دعوة البوت",
+    dashboard: "لوحة التحكم",
+    logout: "تسجيل الخروج",
+    panel_title: "إعدادات لوحة التكت",
+    panel_name_placeholder: "اكتب اسم اللوحة هنا...",
+    create_panel_btn: "إنشاء اللوحة الحالية",
+    send_btn: "إرسال / نشر اللوحة",
+    edit_btn: "تعديل اللوحة",
+    delete_btn: "حذف اللوحة",
+    duplicate_btn: "نسخ مطابقة",
+    active_panels: "اللوحات المفتوحة والنشطة",
+    no_panels: "لا توجد لوحات تذاكر محفوظة حالياً. ابدأ بإنشاء واحدة في الأعلى.",
+    auto_messages: "الرسائل الموقوتة",
+    add_auto_message: "إضافة رسالة موقوتة مبرمجة"
+  },
+  fr: {
+    general_settings: "Paramètres Généraux",
+    ticket_panels: "Panneaux de Tickets",
+    auto_reply: "Réponses Auto",
+    broadcast: "Système de Diffusion",
+    giveaways: "Gestion des Giveaways",
+    welcome_system: "Système d'Accueil",
+    auto_role: "Rôle Automatique",
+    reaction_roles: "Rôles de Réaction",
+    embed_sender: "Émetteur d'Embed",
+    save_btn: "Sauvegarder",
+    add_btn: "Ajouter une carte",
+    choose_guild: "Choisir le serveur",
+    support_srv: "Serveur de Support",
+    choose_lang: "Langue",
+    add_bot: "Ajouter le Bot",
+    dashboard: "Tableau de Bord",
+    logout: "Se déconnecter",
+    panel_title: "Configuration du Panneau",
+    panel_name_placeholder: "Nom du panneau...",
+    create_panel_btn: "Créer le Panneau",
+    send_btn: "Publier",
+    edit_btn: "Modifier",
+    delete_btn: "Supprimer",
+    duplicate_btn: "Dupliquer",
+    active_panels: "Panneaux Actifs",
+    no_panels: "Aucun panneau enregistré pour le moment.",
+    auto_messages: "Messages Auto",
+    add_auto_message: "Créer une annonce planifiée"
+  }
+};
+
+function t(key, lang = 'en') {
+  return locales[lang]?.[key] || locales['en']?.[key] || key;
+}
 
 function normalizeArray(val) {
   if (!val) return [];
@@ -24,30 +123,21 @@ function normalizeArray(val) {
   return [val];
 }
 
-// دالة ذكية لفحص وتصفية الإيموجي وتفادي أخطاء الـ Discord API
+// دالة فحص وتصفية ومعالجة الإيموجي تفادياً لمشاكل ديسكورد API
 function parseAndValidateEmoji(emojiInput) {
   if (!emojiInput || typeof emojiInput !== 'string') return null;
   const trimmed = emojiInput.trim();
   if (!trimmed) return null;
 
-  // 1. التقاط إيموجي ديسكورد المخصص واستخلاص المعرف الرقمي ID الصافي
   const customEmojiRegex = /^<a?:([a-zA-Z0-9_~]+):(\d+)>$/;
   const matchCustom = trimmed.match(customEmojiRegex);
-  if (matchCustom) {
-    return matchCustom[2];
-  }
+  if (matchCustom) return matchCustom[2];
 
-  // 2. التحقق مما إذا كان المدخل عبارة عن ID رقمي صافي
   const numericRegex = /^\d+$/;
-  if (numericRegex.test(trimmed)) {
-    return trimmed;
-  }
+  if (numericRegex.test(trimmed)) return trimmed;
 
-  // 3. التحقق من وجود رمز تعبيري Unicode قياسي لضمان عدم تمرير نصوص عادية
   const unicodeEmojiRegex = /(\u00a9|\u00ae|[\u2000-\u3300]|\ud83c[\ud000-\udfff]|\ud83d[\ud000-\udfff]|\ud83e[\ud000-\udfff])/;
-  if (unicodeEmojiRegex.test(trimmed)) {
-    return trimmed;
-  }
+  if (unicodeEmojiRegex.test(trimmed)) return trimmed;
 
   return null;
 }
@@ -65,6 +155,7 @@ function startDashboard(client) {
     res.redirect('/login');
   }
 
+  // وسيط أمني صارم لحظر أي عملية وصول غير مرخص بها
   function checkGuildAdmin(req, res, next) {
     if (!req.session.user || !req.session.guilds) {
       return res.redirect('/login');
@@ -82,6 +173,15 @@ function startDashboard(client) {
     }
     next();
   }
+
+  // مسار تغيير لغة الداشبورد بشكل تفاعلي سريع
+  app.get('/change-lang/:lang', (req, res) => {
+    const lang = req.params.lang;
+    if (['en', 'ar', 'fr'].includes(lang)) {
+      req.session.lang = lang;
+    }
+    res.redirect('back');
+  });
 
   app.get('/login', (req, res) => {
     if (req.session.user) {
@@ -132,21 +232,46 @@ function startDashboard(client) {
     res.redirect('/');
   });
 
+  // الصفحة الرئيسية للوحة التحكم
   app.get('/', (req, res) => {
-    const loginButton = req.session.user 
-      ? `<a href="/dashboard" class="px-8 py-3 rounded-full btn-gold text-black font-bold transition shadow-lg inline-block">الذهاب إلى لوحة التحكم</a>`
-      : `<a href="/login" class="px-8 py-3 rounded-full btn-gold text-black font-bold transition shadow-lg inline-block">سجل دخولك الآن عبر Discord</a>`;
+    const lang = req.session.lang || 'en';
+    const srvLink = `https://discord.com/api/oauth2/authorize?client_id=${process.env.CLIENT_ID}&permissions=8&scope=bot%20applications.commands`;
 
-    res.send(renderBaseHtml("الرئيسية", `
-      <div class="text-center py-24">
-        <h1 class="text-6xl font-black mb-6 glow-text tracking-wide text-white font-sans">اللوحة الملكية للديسكورد</h1>
-        <p class="text-slate-400 max-w-xl mx-auto mb-10 text-lg leading-relaxed">تحكّم متكامل وسرعة عالية مصممة بأرقى خطوط وتناسقات الويب الحديثة لتجربة تفاعلية غير مسبوقة.</p>
-        ${loginButton}
+    const loginButton = req.session.user 
+      ? `<a href="/dashboard" class="px-8 py-3 rounded-full btn-gold text-black font-bold transition shadow-lg inline-block">${t('dashboard', lang)}</a>`
+      : `<a href="/login" class="px-8 py-3 rounded-full btn-gold text-black font-bold transition shadow-lg inline-block">${t('dashboard', lang)}</a>`;
+
+    res.send(renderBaseHtml("Gateway", `
+      <div class="text-center py-20">
+        <h1 class="text-6xl font-black mb-6 glow-text tracking-wide text-white">Discord Ticket Gold</h1>
+        <p class="text-slate-400 max-w-xl mx-auto mb-12 text-lg leading-relaxed">أدِر سيرفراتك بمفهوم مالي وتفاعلي متميز يجمع بين الفخامة والتحكم الكامل في منصة واحدة متكاملة.</p>
+        
+        <div class="grid grid-cols-1 md:grid-cols-2 gap-8 max-w-2xl mx-auto mb-12">
+          <div class="glass p-8 rounded-3xl border border-slate-800 card-glow transition flex flex-col justify-between items-center text-center">
+            <div class="mb-6">
+              <i class="fa-solid fa-plus-circle text-amber-500 text-5xl mb-4"></i>
+              <h3 class="text-xl font-bold text-white mb-2">${t('add_bot', lang)}</h3>
+              <p class="text-xs text-slate-400">أضف البوت إلى سيرفرك الشخصي بدقائق معدودة وبصلاحيات إدارية كاملة.</p>
+            </div>
+            <a href="${srvLink}" target="_blank" class="px-6 py-2.5 rounded-full border border-amber-500/50 hover:bg-amber-500/10 text-amber-400 font-bold transition w-full">${t('add_bot', lang)}</a>
+          </div>
+
+          <div class="glass p-8 rounded-3xl border border-slate-800 card-glow transition flex flex-col justify-between items-center text-center">
+            <div class="mb-6">
+              <i class="fa-solid fa-chart-line text-amber-500 text-5xl mb-4"></i>
+              <h3 class="text-xl font-bold text-white mb-2">${t('dashboard', lang)}</h3>
+              <p class="text-xs text-slate-400">سجل الدخول فوراً عبر ديسكورد لتعديل اللوحات، الرسائل الموقوتة، والردود التلقائية.</p>
+            </div>
+            ${loginButton}
+          </div>
+        </div>
       </div>
-    `, req.session.user));
+    `, req.session.user, req));
   });
 
+  // عرض السيرفرات التي يملك فيها صلاحيات المسؤول حصرياً
   app.get('/dashboard', checkAuth, (req, res) => {
+    const lang = req.session.lang || 'en';
     const adminGuilds = req.session.guilds.filter(g => (parseInt(g.permissions) & 0x8) === 0x8);
 
     let guildsHtml = `<div class="grid grid-cols-1 md:grid-cols-3 gap-8 mt-8">`;
@@ -158,22 +283,23 @@ function startDashboard(client) {
           <img src="${guildIcon}" class="w-24 h-24 rounded-full mb-6 ring-4 ring-amber-500/25 shadow-lg" />
           <h3 class="font-black text-2xl mb-6 text-white">${g.name}</h3>
           ${isBotIn ? `
-            <a href="/dashboard/${g.id}" class="px-6 py-3 rounded-full btn-gold text-black font-bold transition w-full text-center">تعديل الإعدادات</a>
+            <a href="/dashboard/${g.id}" class="px-6 py-3 rounded-full btn-gold text-black font-bold transition w-full text-center">${t('dashboard', lang)}</a>
           ` : `
-            <a href="https://discord.com/api/oauth2/authorize?client_id=${process.env.CLIENT_ID}&permissions=8&scope=bot%20applications.commands&guild_id=${g.id}" target="_blank" class="px-6 py-3 rounded-full border border-amber-500/50 hover:bg-amber-500/10 text-amber-400 font-bold transition w-full text-center">دعوة البوت الملكي</a>
+            <a href="https://discord.com/api/oauth2/authorize?client_id=${process.env.CLIENT_ID}&permissions=8&scope=bot%20applications.commands&guild_id=${g.id}" target="_blank" class="px-6 py-3 rounded-full border border-amber-500/50 hover:bg-amber-500/10 text-amber-400 font-bold transition w-full text-center">${t('add_bot', lang)}</a>
           `}
         </div>
       `;
     });
     guildsHtml += `</div>`;
 
-    res.send(renderBaseHtml("سيرفراتك", `
-      <h2 class="text-4xl font-black mb-2 glow-text">اختر السيرفر المستهدف</h2>
-      <p class="text-slate-400">ابدأ في إدارة سيرفراتك التي تمتلك فيها صلاحيات Administrator كلياً.</p>
+    res.send(renderBaseHtml("Dashboard", `
+      <h2 class="text-4xl font-black mb-2 glow-text">${t('choose_guild', lang)}</h2>
+      <p class="text-slate-400">ابدأ بإدارة السيرفر الخاص بك الذي تمتلك فيه صلاحيات Administrator كلياً.</p>
       ${guildsHtml}
-    `, req.session.user));
+    `, req.session.user, req));
   });
 
+  // الإعدادات العامة للسيرفر
   app.get('/dashboard/:guildId', checkAuth, checkGuildAdmin, (req, res) => {
     const guild = client.guilds.cache.get(req.params.guildId);
     if (!guild) return res.send("البوت ليس متواجداً في هذا السيرفر!");
@@ -226,6 +352,7 @@ function startDashboard(client) {
     res.send(renderGuildLayout(guild, "general", content, req.session.user, req));
   });
 
+  // إدارة لوحات التذاكر المتعددة (Ticket Panels)
   app.get('/dashboard/:guildId/tickets', checkAuth, checkGuildAdmin, (req, res) => {
     const guild = client.guilds.cache.get(req.params.guildId);
     if (!guild) return res.send("البوت ليس متواجداً في هذا السيرفر!");
@@ -293,7 +420,7 @@ function startDashboard(client) {
     });
 
     const content = `
-      <div class="glass p-8 rounded-3xl border border-slate-800 mb-8 shadow-xl">
+      <div class="glass p-6 rounded-2xl border border-slate-800 mb-8 shadow-xl">
         <h3 class="text-xl font-bold mb-2 text-amber-400">📤 إرسال لوحة التذاكر (Send Ticket Panel)</h3>
         <p class="text-xs text-slate-400 mb-4 font-medium">اختر الروم المناسب من القائمة ثم اضغط على زر إرسال لإطلاق لوحة التذاكر في سيرفرك مباشرة.</p>
         <form action="/dashboard/${guild.id}/tickets/send-panel" method="POST" class="flex flex-col md:flex-row gap-4 items-end">
@@ -399,7 +526,7 @@ function startDashboard(client) {
     res.send(renderGuildLayout(guild, "tickets", content, req.session.user, req));
   });
 
-  // معالجة وحفظ وإرسال بنل التكت للروم مع تقسيم الأزرار ديناميكياً وفحص الإيموجيات مسبقاً
+  // معالجة وإرسال بنل التكت للروم مع تصفية الإيموجيات
   app.post('/dashboard/:guildId/tickets/send-panel', checkAuth, checkGuildAdmin, async (req, res) => {
     const guild = client.guilds.cache.get(req.params.guildId);
     if (!guild) return res.send("السيرفر غير متوفر.");
@@ -419,7 +546,6 @@ function startDashboard(client) {
       return res.redirect(`/dashboard/${guild.id}/tickets?error=channel_not_found`);
     }
 
-    // التحقق الفني الصارم من صلاحيات البوت داخل القناة قبل الإرسال وتفادي الأخطاء الصامتة
     const me = guild.members.me || await guild.members.fetch(client.user.id).catch(() => null);
     if (!me) {
       return res.redirect(`/dashboard/${guild.id}/tickets?error=bot_member_not_found`);
@@ -459,12 +585,11 @@ function startDashboard(client) {
           .setLabel(ticket.name)
           .setStyle(style);
 
-        // تصفية وتحليل الإيموجي ديناميكياً لتفادي استثناء الـ API الحاد
         const buttonEmoji = parseAndValidateEmoji(ticket.emoji);
         if (buttonEmoji) {
           button.setEmoji(buttonEmoji);
         } else if (ticket.emoji && ticket.emoji.trim() !== "") {
-          hasInvalidEmojiWarning = true; // تم رصد وتصفية قيمة نصية أو تعبيرية غير متوافقة
+          hasInvalidEmojiWarning = true;
         }
 
         currentRow.addComponents(button);
@@ -477,7 +602,6 @@ function startDashboard(client) {
 
       await targetChannel.send({ embeds: [embed], components: rows });
 
-      // تخزين روم الإرسال في قاعدة البيانات
       config.general.ticketChannel = targetChannelId;
       client.saveConfig();
 
@@ -487,11 +611,12 @@ function startDashboard(client) {
         return res.redirect(`/dashboard/${guild.id}/tickets?success=panel_sent`);
       }
     } catch (err) {
-      console.error("[TICKET PANEL SEND ERROR] Crash trace captured inside Node:", err);
+      console.error("[TICKET PANEL SEND ERROR] Crash trace inside Node:", err);
       return res.redirect(`/dashboard/${guild.id}/tickets?error=internal_error&msg=${encodeURIComponent(err.message)}`);
     }
   });
 
+  // إدارة الردود التلقائية
   app.get('/dashboard/:guildId/auto-reply', checkAuth, checkGuildAdmin, (req, res) => {
     const guild = client.guilds.cache.get(req.params.guildId);
     if (!guild) return res.send("البوت ليس متواجداً في هذا السيرفر!");
@@ -621,9 +746,10 @@ function startDashboard(client) {
 
     config.autoReplies = updatedReplies;
     client.saveConfig();
-    res.redirect(`/dashboard/${req.params.guildId}/auto-reply`);
+    res.redirect(`/dashboard/${req.params.guildId}/auto-reply?success=panel_sent`);
   });
 
+  // إدارة البث العام والرسائل الجماعية
   app.get('/dashboard/:guildId/broadcast', checkAuth, checkGuildAdmin, (req, res) => {
     const guild = client.guilds.cache.get(req.params.guildId);
     if (!guild) return res.send("البوت ليس متواجداً في هذا السيرفر!");
@@ -779,7 +905,8 @@ function startDashboard(client) {
     res.redirect(`/dashboard/${guild.id}/broadcast`);
   });
 
-  app.get('/dashboard/:guildId/giveaway', checkAuth, (req, res) => {
+  // إدارة نظام القيف أواي (Giveaways Manager)
+  app.get('/dashboard/:guildId/giveaway', checkAuth, checkGuildAdmin, (req, res) => {
     const guild = client.guilds.cache.get(req.params.guildId);
     if (!guild) return res.send("البوت ليس متواجداً في هذا السيرفر!");
 
@@ -811,7 +938,7 @@ function startDashboard(client) {
       <div class="grid grid-cols-1 md:grid-cols-2 gap-8">
         
         <form action="/dashboard/${guild.id}/giveaway/start" method="POST" class="glass p-6 rounded-2xl border border-slate-800 space-y-4">
-          <h3 class="text-lg font-bold text-amber-400 border-b border-slate-800 pb-2">إنشاء قيف أواي جديد</h3>
+          <h3 class="text-lg font-bold text-amber-400 border-b border-slate-800 pb-2">إنشاء سحب جديد</h3>
           
           <div>
             <label class="block text-xs text-slate-400 mb-1">الروم المستهدف</label>
@@ -989,6 +1116,7 @@ function startDashboard(client) {
     res.redirect(`/dashboard/${guild.id}/giveaway`);
   });
 
+  // إدارة نظام الترحيب بالأعضاء الجدد (Welcome System)
   app.get('/dashboard/:guildId/welcome', checkAuth, checkGuildAdmin, (req, res) => {
     const guild = client.guilds.cache.get(req.params.guildId);
     if (!guild) return res.send("البوت ليس متواجداً في هذا السيرفر!");
@@ -1038,6 +1166,238 @@ function startDashboard(client) {
     res.send(renderGuildLayout(guild, "welcome", content, req.session.user, req));
   });
 
+  app.post('/dashboard/:guildId/welcome/save', checkAuth, checkGuildAdmin, (req, res) => {
+    const config = getGuildConfig(req.params.guildId);
+    config.welcome = {
+      enabled: req.body.enabled === 'true',
+      channelId: req.body.channelId,
+      mentionUser: req.body.mentionUser === 'true',
+      message: req.body.message
+    };
+    client.saveConfig();
+    res.redirect(`/dashboard/${req.params.guildId}/welcome?success=panel_sent`);
+  });
+
+  // إدارة الرسائل الموقوتة (Scheduled / Auto Messages)
+  app.get('/dashboard/:guildId/auto-messages', checkAuth, checkGuildAdmin, (req, res) => {
+    const guild = client.guilds.cache.get(req.params.guildId);
+    if (!guild) return res.send("السيرفر غير متوفر.");
+
+    const config = getGuildConfig(guild.id);
+    const channels = guild.channels.cache;
+    const channelOptions = getSelectOptions(channels, ChannelType.GuildText);
+
+    let activeHtml = '';
+    const autoMessages = config.autoMessages || [];
+    autoMessages.forEach((m, idx) => {
+      activeHtml += `
+        <div class="glass p-4 rounded-xl border border-slate-800 flex justify-between items-center mb-4">
+          <div>
+            <h5 class="font-bold text-white">${m.message.slice(0, 30)}...</h5>
+            <p class="text-xs text-slate-400">تكرار: كل ${m.intervalValue} ${m.intervalUnit} | القناة: <#${m.channelId}></p>
+          </div>
+          <a href="/dashboard/${guild.id}/auto-messages/delete/${idx}" class="text-red-500 hover:text-red-400 text-xs font-bold transition"><i class="fa-solid fa-trash"></i> حذف</a>
+        </div>
+      `;
+    });
+
+    const content = `
+      <h2 class="text-3xl font-black mb-6 text-white border-b border-amber-500/20 pb-4">⏱️ نظام الرسائل الموقوتة التلقائية (Auto Messages)</h2>
+      <div class="grid grid-cols-1 md:grid-cols-2 gap-8">
+        <form action="/dashboard/${guild.id}/auto-messages/save" method="POST" class="glass p-6 rounded-2xl border border-slate-800 space-y-4">
+          <h3 class="text-lg font-bold text-amber-400 border-b border-slate-800 pb-2">إضافة رسالة موقوتة جديدة</h3>
+          <div>
+            <label class="block text-xs text-slate-400 mb-1">القناة المستهدفة</label>
+            <select name="channelId" class="w-full bg-black/60 border border-slate-800 focus:border-amber-500 rounded-lg p-2 text-white" required>${channelOptions}</select>
+          </div>
+          <div>
+            <label class="block text-xs text-slate-400 mb-1">صيغة الرسالة</label>
+            <select name="format" class="w-full bg-black/60 border border-slate-800 focus:border-amber-500 rounded-lg p-2 text-white">
+              <option value="plain">رسالة عادية (Plain Text)</option>
+              <option value="embed">إمبد مخصص (Embed Message)</option>
+            </select>
+          </div>
+          <div>
+            <label class="block text-xs text-slate-400 mb-1">عنوان الإمبد (اختياري)</label>
+            <input type="text" name="embedTitle" class="w-full bg-black/60 border border-slate-800 focus:border-amber-500 rounded-lg p-2 text-white" />
+          </div>
+          <div>
+            <label class="block text-xs text-slate-400 mb-1">محتوى الرسالة</label>
+            <textarea name="message" class="w-full bg-black/60 border border-slate-800 focus:border-amber-500 rounded-lg p-2 text-white h-24" required></textarea>
+          </div>
+          <div class="grid grid-cols-1 md:grid-cols-2 gap-4">
+            <div>
+              <label class="block text-xs text-slate-400 mb-1">معدل التكرار</label>
+              <input type="number" name="intervalValue" min="1" class="w-full bg-black/60 border border-slate-800 focus:border-amber-500 rounded-lg p-2 text-white" required />
+            </div>
+            <div>
+              <label class="block text-xs text-slate-400 mb-1">الوحدة</label>
+              <select name="intervalUnit" class="w-full bg-black/60 border border-slate-800 focus:border-amber-500 rounded-lg p-2 text-white">
+                <option value="minutes">دقائق</option>
+                <option value="hours">ساعات</option>
+                <option value="days">أيام</option>
+              </select>
+            </div>
+          </div>
+          <div>
+            <label class="block text-xs text-slate-400 mb-1">رابط صورة اختيارية (URL)</label>
+            <input type="text" name="embedImage" class="w-full bg-black/60 border border-slate-800 focus:border-amber-500 rounded-lg p-2 text-white" />
+          </div>
+          <button type="submit" class="px-6 py-3 rounded-full btn-gold text-black font-black transition w-full shadow-lg">حفظ وجدولة الرسالة</button>
+        </form>
+
+        <div class="glass p-6 rounded-2xl border border-slate-800">
+          <h3 class="text-lg font-bold text-amber-400 border-b border-slate-800 pb-2 mb-4">الرسائل المجدولة حالياً</h3>
+          ${activeHtml || '<p class="text-slate-400 text-sm">لا توجد رسائل مجدولة حالياً.</p>'}
+        </div>
+      </div>
+    `;
+
+    res.send(renderGuildLayout(guild, "auto-messages", content, req.session.user, req));
+  });
+
+  app.post('/dashboard/:guildId/auto-messages/save', checkAuth, checkGuildAdmin, (req, res) => {
+    const config = getGuildConfig(req.params.guildId);
+    if (!config.autoMessages) config.autoMessages = [];
+
+    const { channelId, format, embedTitle, message, intervalValue, intervalUnit, embedImage } = req.body;
+
+    let intervalValueInt = parseInt(intervalValue);
+    let intervalMs = intervalValueInt * 60 * 1000;
+    if (intervalUnit === 'hours') intervalMs = intervalValueInt * 60 * 60 * 1000;
+    if (intervalUnit === 'days') intervalMs = intervalValueInt * 24 * 60 * 60 * 1000;
+
+    config.autoMessages.push({
+      channelId,
+      format,
+      embedTitle,
+      message,
+      intervalValue: intervalValueInt,
+      intervalUnit,
+      embedImage,
+      interval: intervalMs,
+      lastSent: 0,
+      enabled: true
+    });
+
+    client.saveConfig();
+    res.redirect(`/dashboard/${req.params.guildId}/auto-messages?success=panel_sent`);
+  });
+
+  app.get('/dashboard/:guildId/auto-messages/delete/:index', checkAuth, checkGuildAdmin, (req, res) => {
+    const config = getGuildConfig(req.params.guildId);
+    const idx = parseInt(req.params.index);
+    if (config.autoMessages && config.autoMessages[idx]) {
+      config.autoMessages.splice(idx, 1);
+      client.saveConfig();
+    }
+    res.redirect(`/dashboard/${req.params.guildId}/auto-messages`);
+  });
+
+  // إدارة رتب التفاعل (Reaction Roles System)
+  app.get('/dashboard/:guildId/reaction-roles', checkAuth, checkGuildAdmin, (req, res) => {
+    const guild = client.guilds.cache.get(req.params.guildId);
+    if (!guild) return res.send("السيرفر غير متوفر.");
+
+    const config = getGuildConfig(guild.id);
+    const channels = guild.channels.cache;
+    const roles = guild.roles.cache.filter(r => r.name !== '@everyone');
+
+    const channelOptions = getSelectOptions(channels, ChannelType.GuildText);
+    const roleOptions = getRoleSelectOptions(roles);
+
+    let activeHtml = '';
+    const rrList = config.reactionRoles || [];
+    rrList.forEach((rr, idx) => {
+      activeHtml += `
+        <div class="glass p-4 rounded-xl border border-slate-800 flex justify-between items-center mb-4">
+          <div>
+            <h5 class="font-bold text-white">إيموجي: ${rr.emoji}</h5>
+            <p class="text-xs text-slate-400">الرتبة: <@&${rr.roleId}> | الرسالة ID: ${rr.messageId}</p>
+          </div>
+          <a href="/dashboard/${guild.id}/reaction-roles/delete/${idx}" class="text-red-500 hover:text-red-400 text-xs font-bold transition"><i class="fa-solid fa-trash"></i> حذف</a>
+        </div>
+      `;
+    });
+
+    const content = `
+      <h2 class="text-3xl font-black mb-6 text-white border-b border-amber-500/20 pb-4">🛡️ نظام رتب التفاعل الذكي (Reaction Roles)</h2>
+      <div class="grid grid-cols-1 md:grid-cols-2 gap-8">
+        <form action="/dashboard/${guild.id}/reaction-roles/save" method="POST" class="glass p-6 rounded-2xl border border-slate-800 space-y-4">
+          <h3 class="text-lg font-bold text-amber-400 border-b border-slate-800 pb-2">إضافة رتبة تفاعل جديدة</h3>
+          <div>
+            <label class="block text-xs text-slate-400 mb-1">القناة المستهدفة</label>
+            <select name="channelId" class="w-full bg-black/60 border border-slate-800 focus:border-amber-500 rounded-lg p-2 text-white" required>${channelOptions}</select>
+          </div>
+          <div>
+            <label class="block text-xs text-slate-400 mb-1">معرف الرسالة (Message ID)</label>
+            <input type="text" name="messageId" class="w-full bg-black/60 border border-slate-800 focus:border-amber-500 rounded-lg p-2 text-white" required />
+          </div>
+          <div>
+            <label class="block text-xs text-slate-400 mb-1">الإيموجي (Unicode أو ID مخصص)</label>
+            <input type="text" name="emoji" class="w-full bg-black/60 border border-slate-800 focus:border-amber-500 rounded-lg p-2 text-white" required />
+          </div>
+          <div>
+            <label class="block text-xs text-slate-400 mb-1">الرتبة المعطاة</label>
+            <select name="roleId" class="w-full bg-black/60 border border-slate-800 focus:border-amber-500 rounded-lg p-2 text-white" required>${roleOptions}</select>
+          </div>
+          <button type="submit" class="px-6 py-3 rounded-full btn-gold text-black font-black transition w-full shadow-lg">حفظ وتفعيل الرتبة</button>
+        </form>
+
+        <div class="glass p-6 rounded-2xl border border-slate-800">
+          <h3 class="text-lg font-bold text-amber-400 border-b border-slate-800 pb-2 mb-4">الرتب المفعلة حالياً</h3>
+          ${activeHtml || '<p class="text-slate-400 text-sm">لا توجد رتب تفاعل مضافة حالياً.</p>'}
+        </div>
+      </div>
+    `;
+
+    res.send(renderGuildLayout(guild, "reaction-roles", content, req.session.user, req));
+  });
+
+  app.post('/dashboard/:guildId/reaction-roles/save', checkAuth, checkGuildAdmin, async (req, res) => {
+    const config = getGuildConfig(req.params.guildId);
+    if (!config.reactionRoles) config.reactionRoles = [];
+
+    const { channelId, messageId, emoji, roleId } = req.body;
+
+    const emojiParsed = parseAndValidateEmoji(emoji) || emoji.trim();
+
+    config.reactionRoles.push({
+      channelId,
+      messageId,
+      emoji: emojiParsed,
+      roleId
+    });
+
+    client.saveConfig();
+
+    const guild = client.guilds.cache.get(req.params.guildId);
+    if (guild) {
+      const channel = guild.channels.cache.get(channelId);
+      if (channel) {
+        try {
+          const msg = await channel.messages.fetch(messageId);
+          if (msg) {
+            await msg.react(emojiParsed).catch(() => {});
+          }
+        } catch (_) {}
+      }
+    }
+
+    res.redirect(`/dashboard/${req.params.guildId}/reaction-roles?success=panel_sent`);
+  });
+
+  app.get('/dashboard/:guildId/reaction-roles/delete/:index', checkAuth, checkGuildAdmin, (req, res) => {
+    const config = getGuildConfig(req.params.guildId);
+    const idx = parseInt(req.params.index);
+    if (config.reactionRoles && config.reactionRoles[idx]) {
+      config.reactionRoles.splice(idx, 1);
+      client.saveConfig();
+    }
+    res.redirect(`/dashboard/${req.params.guildId}/reaction-roles`);
+  });
+
+  // الرتب التلقائية عند الدخول (Auto Role)
   app.get('/dashboard/:guildId/auto-role', checkAuth, checkGuildAdmin, (req, res) => {
     const guild = client.guilds.cache.get(req.params.guildId);
     if (!guild) return res.send("البوت ليس متواجداً في هذا السيرفر!");
@@ -1073,6 +1433,7 @@ function startDashboard(client) {
     res.send(renderGuildLayout(guild, "auto-role", content, req.session.user, req));
   });
 
+  // مرسل الإمبد المخصص (Embed Sender)
   app.get('/dashboard/:guildId/embed-sender', checkAuth, checkGuildAdmin, (req, res) => {
     const guild = client.guilds.cache.get(req.params.guildId);
     if (!guild) return res.send("البوت ليس متواجداً في هذا السيرفر!");
@@ -1210,7 +1571,9 @@ function getGuildConfig(guildId) {
       autoReplies: [],
       welcome: {},
       autoRole: {},
-      giveaways: []
+      giveaways: [],
+      autoMessages: [],
+      reactionRoles: []
     };
   }
   return app.client.config.guilds[guildId];
@@ -1233,20 +1596,35 @@ function getRoleSelectOptions(roles, selectedId) {
   return options;
 }
 
-function renderBaseHtml(title, body, user) {
-  const userSection = user ? `
-    <div class="flex items-center space-x-3 space-x-reverse">
-      <img src="https://cdn.discordapp.com/avatars/${user.id}/${user.avatar}.png" class="w-10 h-10 rounded-full" />
-      <div class="text-right">
-        <h5 class="text-sm font-bold text-white">${user.username}</h5>
-        <a href="/logout" class="text-xs text-red-500 hover:text-red-400 font-semibold">تسجيل الخروج</a>
+function renderBaseHtml(title, body, user, req) {
+  const lang = req ? (req.session.lang || 'en') : 'en';
+
+  const langSelector = `
+    <div class="relative inline-block text-left" id="lang-menu">
+      <button type="button" class="px-4 py-2 rounded-xl glass text-xs font-bold text-amber-500 hover:border-amber-500 transition-all flex items-center gap-2" onclick="document.getElementById('lang-list').classList.toggle('hidden')">
+        <i class="fa-solid fa-globe"></i> ${t('choose_lang', lang)}
+      </button>
+      <div id="lang-list" class="hidden absolute left-0 mt-2 w-32 glass border border-slate-800 rounded-xl shadow-2xl z-50 p-2 space-y-1">
+        <a href="/change-lang/en" class="block px-3 py-1.5 rounded-lg text-xs font-bold hover:bg-amber-500/10 hover:text-amber-400">🇺🇸 English</a>
+        <a href="/change-lang/ar" class="block px-3 py-1.5 rounded-lg text-xs font-bold hover:bg-amber-500/10 hover:text-amber-400">🇸🇦 العربية</a>
+        <a href="/change-lang/fr" class="block px-3 py-1.5 rounded-lg text-xs font-bold hover:bg-amber-500/10 hover:text-amber-400">🇫🇷 French</a>
       </div>
     </div>
-  ` : `<a href="/login" class="px-6 py-3 rounded-full btn-gold text-black font-black text-sm transition shadow-lg inline-block">تسجيل دخول</a>`;
+  `;
+
+  const userSection = user ? `
+    <div class="flex items-center space-x-3 space-x-reverse">
+      <img src="https://cdn.discordapp.com/avatars/${user.id}/${user.avatar}.png" class="w-10 h-10 rounded-full ring-2 ring-amber-500/30" />
+      <div class="text-right">
+        <h5 class="text-sm font-bold text-white">${user.username}</h5>
+        <a href="/logout" class="text-xs text-red-500 hover:text-red-400 font-semibold">${t('logout', lang)}</a>
+      </div>
+    </div>
+  ` : `<a href="/login" class="px-6 py-3 rounded-full btn-gold text-black font-black text-sm transition shadow-lg inline-block">${t('dashboard', lang)}</a>`;
 
   return `
     <!DOCTYPE html>
-    <html lang="ar" dir="rtl">
+    <html lang="${lang}" dir="${lang === 'ar' ? 'rtl' : 'ltr'}">
     <head>
       <meta charset="UTF-8">
       <meta name="viewport" content="width=device-width, initial-scale=1.0">
@@ -1274,18 +1652,26 @@ function renderBaseHtml(title, body, user) {
           transform: translateY(-2px);
           box-shadow: 0 6px 22px rgba(212, 175, 55, 0.5);
         }
-        .glow-text { text-shadow: 0 0 15px rgba(212, 175, 55, 0.3); }
+        .glow-text { text-shadow: 0 0 15px rgba(212, 175, 55, 0.4); }
         .card-glow { transition: all 0.3s ease; }
         .card-glow:hover { border-color: rgba(212, 175, 55, 0.3); box-shadow: 0 10px 25px -5px rgba(212, 175, 55, 0.12); }
       </style>
     </head>
-    <body class="min-h-screen flex flex-col">
+    <body class="min-h-screen flex flex-col" onload="document.getElementById('page-loader').classList.add('opacity-0', 'pointer-events-none')">
+      <div id="page-loader" class="fixed inset-0 z-50 bg-black/90 flex flex-col items-center justify-center transition-all duration-500">
+        <div class="w-16 h-16 border-4 border-t-amber-500 border-slate-800 rounded-full animate-spin mb-4"></div>
+        <p class="text-amber-500 font-bold text-lg tracking-wider animate-pulse">Discord Ticket Gold</p>
+      </div>
+
       <nav class="glass border-b border-amber-500/10 py-4 px-6 md:px-12 flex justify-between items-center sticky top-0 z-50">
         <div class="flex items-center space-x-4 space-x-reverse">
           <i class="fa-solid fa-gem text-amber-500 text-3xl"></i>
           <span class="text-2xl font-black text-white tracking-wider glow-text">Discord Ticket Gold</span>
         </div>
-        ${userSection}
+        <div class="flex items-center gap-6">
+          ${langSelector}
+          ${userSection}
+        </div>
       </nav>
       <main class="flex-grow max-w-7xl w-full mx-auto p-6 md:p-12">
         ${body}
@@ -1302,6 +1688,7 @@ function renderGuildLayout(guild, activePage, content, user, req) {
   const config = getGuildConfig(guild.id);
   const botLogo = config.general?.botLogo || guild.iconURL() || 'https://cdn.discordapp.com/embed/avatars/0.png';
   const botName = config.general?.botName || guild.name;
+  const lang = req ? (req.session.lang || 'en') : 'en';
 
   const success = req ? req.query.success : null;
   const error = req ? req.query.error : null;
@@ -1313,14 +1700,14 @@ function renderGuildLayout(guild, activePage, content, user, req) {
     alertHtml = `
       <div class="mb-6 p-4 rounded-2xl border border-emerald-500/25 bg-emerald-500/10 flex items-center gap-3 text-emerald-400 text-sm">
         <i class="fa-solid fa-circle-check text-lg"></i>
-        <span>تم إرسال لوحة التذاكر بنجاح إلى القناة المحددة وحفظ إعدادات القناة!</span>
+        <span>تم حفظ جميع التغييرات وجدولتها وتخزينها بنجاح تالٍ!</span>
       </div>
     `;
   } else if (success === 'panel_sent_warn') {
     alertHtml = `
       <div class="mb-6 p-4 rounded-2xl border border-amber-500/25 bg-amber-500/10 flex items-center gap-3 text-amber-400 text-sm">
         <i class="fa-solid fa-triangle-exclamation text-lg"></i>
-        <span>تم إرسال لوحة التذاكر بنجاح! (تنبيه: تم تجاوز بعض الرموز التعبيرية أو النصوص المدخلة في حقل الإيموجي لكونها غير صالحة، وذلك لحماية لوحة التكت من التعطل).</span>
+        <span>تم إرسال اللوحة بنجاح! (تنبيه: تم تجاوز بعض الرموز التعبيرية أو النصوص المدخلة في حقل الإيموجي لكونها غير صالحة، وذلك لحماية لوحة التكت من التعطل).</span>
       </div>
     `;
   } else if (error === 'no_channel') {
@@ -1361,14 +1748,16 @@ function renderGuildLayout(guild, activePage, content, user, req) {
   }
 
   const menuItems = [
-    { id: 'general', label: '⚙️ الإعدادات العامة', link: `/dashboard/${guild.id}` },
-    { id: 'tickets', label: '🎫 نظام التكتات', link: `/dashboard/${guild.id}/tickets` },
-    { id: 'auto-reply', label: '💬 الردود التلقائية', link: `/dashboard/${guild.id}/auto-reply` },
-    { id: 'broadcast', label: '📢 نظام البث العام', link: `/dashboard/${guild.id}/broadcast` },
-    { id: 'giveaway', label: '🎉 نظام القيف أواي', link: `/dashboard/${guild.id}/giveaway` },
-    { id: 'welcome', label: '👋 نظام الترحيب', link: `/dashboard/${guild.id}/welcome` },
-    { id: 'auto-role', label: '🛡️ الرتب التلقائية', link: `/dashboard/${guild.id}/auto-role` },
-    { id: 'embed-sender', label: '✉️ مرسل الإمبد', link: `/dashboard/${guild.id}/embed-sender` }
+    { id: 'general', label: `⚙️ ${t('general_settings', lang)}`, link: `/dashboard/${guild.id}` },
+    { id: 'tickets', label: `🎫 ${t('ticket_panels', lang)}`, link: `/dashboard/${guild.id}/tickets` },
+    { id: 'auto-reply', label: `💬 ${t('auto_reply', lang)}`, link: `/dashboard/${guild.id}/auto-reply` },
+    { id: 'broadcast', label: `📢 ${t('broadcast', lang)}`, link: `/dashboard/${guild.id}/broadcast` },
+    { id: 'giveaway', label: `🎉 ${t('giveaways', lang)}`, link: `/dashboard/${guild.id}/giveaway` },
+    { id: 'auto-messages', label: `⏱️ ${t('auto_messages', lang)}`, link: `/dashboard/${guild.id}/auto-messages` },
+    { id: 'reaction-roles', label: `🛡️ ${t('reaction_roles', lang)}`, link: `/dashboard/${guild.id}/reaction-roles` },
+    { id: 'welcome', label: `👋 ${t('welcome_system', lang)}`, link: `/dashboard/${guild.id}/welcome` },
+    { id: 'auto-role', label: `🛡️ ${t('auto_role', lang)}`, link: `/dashboard/${guild.id}/auto-role` },
+    { id: 'embed-sender', label: `✉️ ${t('embed_sender', lang)}`, link: `/dashboard/${guild.id}/embed-sender` }
   ];
 
   let sidebarHtml = '';
@@ -1394,6 +1783,12 @@ function renderGuildLayout(guild, activePage, content, user, req) {
         <nav class="flex flex-col space-y-2">
           ${sidebarHtml}
         </nav>
+        
+        <div class="pt-4 border-t border-amber-500/15 text-center">
+          <a href="https://discord.gg/UZVXDRG6kj" target="_blank" class="px-4 py-2 rounded-xl border border-amber-500/30 hover:bg-amber-500/10 text-amber-500 font-bold transition text-xs flex items-center justify-center gap-2">
+            <i class="fa-brands fa-discord"></i> ${t('support_srv', lang)}
+          </a>
+        </div>
       </aside>
 
       <section class="flex-grow w-full md:w-3/4 glass p-8 md:p-10 rounded-3xl border border-slate-800">
@@ -1403,7 +1798,7 @@ function renderGuildLayout(guild, activePage, content, user, req) {
     </div>
   `;
 
-  return renderBaseHtml(guild.name, body, user);
+  return renderBaseHtml(guild.name, body, user, req);
 }
 
 module.exports = { startDashboard, app };
