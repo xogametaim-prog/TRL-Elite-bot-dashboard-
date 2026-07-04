@@ -29,34 +29,6 @@ const client = new Client({
   partials: [Partials.Channel, Partials.Message, Partials.User, Partials.Reaction]
 });
 
-// دالة ذكية لفحص وتصفية الإيموجي وتفادي أخطاء الـ Discord API
-function parseAndValidateEmoji(emojiInput) {
-  if (!emojiInput || typeof emojiInput !== 'string') return null;
-  const trimmed = emojiInput.trim();
-  if (!trimmed) return null;
-
-  // 1. التقاط إيموجي ديسكورد المخصص واستخلاص المعرف الرقمي ID الصافي
-  const customEmojiRegex = /^<a?:([a-zA-Z0-9_~]+):(\d+)>$/;
-  const matchCustom = trimmed.match(customEmojiRegex);
-  if (matchCustom) {
-    return matchCustom[2];
-  }
-
-  // 2. التحقق مما إذا كان المدخل عبارة عن ID رقمي صافي
-  const numericRegex = /^\d+$/;
-  if (numericRegex.test(trimmed)) {
-    return trimmed;
-  }
-
-  // 3. التحقق من وجود رمز تعبيري Unicode قياسي لضمان عدم تمرير نصوص عادية
-  const unicodeEmojiRegex = /(\u00a9|\u00ae|[\u2000-\u3300]|\ud83c[\ud000-\udfff]|\ud83d[\ud000-\udfff]|\ud83e[\ud000-\udfff])/;
-  if (unicodeEmojiRegex.test(trimmed)) {
-    return trimmed;
-  }
-
-  return null;
-}
-
 // تحميل الإعدادات من config.json بشكل آمن
 let config = { guilds: {} };
 if (fs.existsSync('./config.json')) {
@@ -96,6 +68,43 @@ async function sendLog(guild, embed) {
     channel.send({ embeds: [embed] }).catch(() => {});
   }
 }
+
+// فحص وإرسال الرسائل الموقوتة التلقائية (Scheduled Messages)
+setInterval(async () => {
+  const now = Date.now();
+  for (const guildId in client.config.guilds) {
+    const guildConfig = client.config.guilds[guildId];
+    if (!guildConfig.autoMessages) continue;
+    const guild = client.guilds.cache.get(guildId);
+    if (!guild) continue;
+
+    for (const msg of guildConfig.autoMessages) {
+      if (msg.enabled && now >= (msg.lastSent + msg.interval)) {
+        msg.lastSent = now;
+        client.saveConfig();
+
+        const channel = guild.channels.cache.get(msg.channelId);
+        if (channel) {
+          try {
+            if (msg.format === 'plain') {
+              await channel.send({ content: msg.message });
+            } else {
+              const embed = new EmbedBuilder()
+                .setDescription(msg.message)
+                .setColor('#d4af37')
+                .setTimestamp();
+              if (msg.embedTitle) embed.setTitle(msg.embedTitle);
+              if (msg.embedImage) embed.setImage(msg.embedImage);
+              await channel.send({ embeds: [embed] });
+            }
+          } catch (err) {
+            console.error(`Failed to send scheduled message in guild ${guildId}:`, err);
+          }
+        }
+      }
+    }
+  }
+}, 10000);
 
 // فحص القيف أواي التلقائي والجدولة
 setInterval(async () => {
@@ -320,6 +329,72 @@ client.on('messageUpdate', async (oldMessage, newMessage) => {
   sendLog(oldMessage.guild, embed);
 });
 
+// مستمع رتب التفاعل التلقائي (Reaction Roles System)
+client.on('messageReactionAdd', async (reaction, user) => {
+  if (user.bot) return;
+  if (reaction.partial) {
+    try {
+      await reaction.fetch();
+    } catch (err) {
+      console.error('Failed to fetch message reaction partial:', err);
+      return;
+    }
+  }
+  const { message } = reaction;
+  if (!message.guild) return;
+
+  const guildConfig = client.config.guilds[message.guild.id];
+  if (!guildConfig || !guildConfig.reactionRoles) return;
+
+  const emojiName = reaction.emoji.id || reaction.emoji.name;
+  const match = guildConfig.reactionRoles.find(rr => 
+    rr.messageId === message.id && 
+    (rr.emoji === emojiName || rr.emoji.includes(emojiName))
+  );
+
+  if (match) {
+    const member = await message.guild.members.fetch(user.id).catch(() => null);
+    if (member) {
+      const role = message.guild.roles.cache.get(match.roleId);
+      if (role) {
+        await member.roles.add(role).catch(() => {});
+      }
+    }
+  }
+});
+
+client.on('messageReactionRemove', async (reaction, user) => {
+  if (user.bot) return;
+  if (reaction.partial) {
+    try {
+      await reaction.fetch();
+    } catch (err) {
+      return;
+    }
+  }
+  const { message } = reaction;
+  if (!message.guild) return;
+
+  const guildConfig = client.config.guilds[message.guild.id];
+  if (!guildConfig || !guildConfig.reactionRoles) return;
+
+  const emojiName = reaction.emoji.id || reaction.emoji.name;
+  const match = guildConfig.reactionRoles.find(rr => 
+    rr.messageId === message.id && 
+    (rr.emoji === emojiName || rr.emoji.includes(emojiName))
+  );
+
+  if (match) {
+    const member = await message.guild.members.fetch(user.id).catch(() => null);
+    if (member) {
+      const role = message.guild.roles.cache.get(match.roleId);
+      if (role) {
+        await member.roles.remove(role).catch(() => {});
+      }
+    }
+  }
+});
+
 // إدارة الأزرار المودال التفاعلية داخل التكت
 client.on('interactionCreate', async (interaction) => {
   if (!interaction.guild) return;
@@ -407,11 +482,21 @@ client.on('interactionCreate', async (interaction) => {
 
     if (customId.startsWith('ticket_open_')) {
       await interaction.deferReply({ ephemeral: true });
-      const ticketTypeId = customId.replace('ticket_open_', '');
-      const ticketType = guildConfig?.tickets?.find(t => t.id === ticketTypeId);
+      const parts = customId.replace('ticket_open_', '').split('_panel_');
+      const ticketTypeId = parts[0];
+      const panelId = parts[1];
+
+      // البحث عن اللوحة ونوع التكت الخاص بها
+      let ticketType = null;
+      if (guildConfig?.panels) {
+        const panel = guildConfig.panels.find(p => p.id === panelId);
+        if (panel && panel.tickets) {
+          ticketType = panel.tickets.find(t => t.id === ticketTypeId);
+        }
+      }
 
       if (!ticketType) {
-        return interaction.editReply({ content: '❌ حدث خطأ في الحصول على نوع هذه التذكرة.' });
+        return interaction.editReply({ content: '❌ حدث خطأ في الحصول على نوع هذه التذكرة أو اللوحة غير صالحة.' });
       }
 
       const maxTickets = parseInt(guildConfig.maxTickets || '4');
