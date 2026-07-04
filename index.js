@@ -29,6 +29,34 @@ const client = new Client({
   partials: [Partials.Channel, Partials.Message, Partials.User, Partials.Reaction]
 });
 
+// دالة ذكية لفحص وتصفية الإيموجي وتفادي أخطاء الـ Discord API
+function parseAndValidateEmoji(emojiInput) {
+  if (!emojiInput || typeof emojiInput !== 'string') return null;
+  const trimmed = emojiInput.trim();
+  if (!trimmed) return null;
+
+  // 1. التقاط إيموجي ديسكورد المخصص واستخلاص المعرف الرقمي ID الصافي
+  const customEmojiRegex = /^<a?:([a-zA-Z0-9_~]+):(\d+)>$/;
+  const matchCustom = trimmed.match(customEmojiRegex);
+  if (matchCustom) {
+    return matchCustom[2];
+  }
+
+  // 2. التحقق مما إذا كان المدخل عبارة عن ID رقمي صافي
+  const numericRegex = /^\d+$/;
+  if (numericRegex.test(trimmed)) {
+    return trimmed;
+  }
+
+  // 3. التحقق من وجود رمز تعبيري Unicode قياسي لضمان عدم تمرير نصوص عادية
+  const unicodeEmojiRegex = /(\u00a9|\u00ae|[\u2000-\u3300]|\ud83c[\ud000-\udfff]|\ud83d[\ud000-\udfff]|\ud83e[\ud000-\udfff])/;
+  if (unicodeEmojiRegex.test(trimmed)) {
+    return trimmed;
+  }
+
+  return null;
+}
+
 // تحميل الإعدادات من config.json بشكل آمن
 let config = { guilds: {} };
 if (fs.existsSync('./config.json')) {
@@ -292,7 +320,7 @@ client.on('messageUpdate', async (oldMessage, newMessage) => {
   sendLog(oldMessage.guild, embed);
 });
 
-// إدارة الأزرار الملكية والمودال التفاعلية داخل التكت
+// إدارة الأزرار المودال التفاعلية داخل التكت
 client.on('interactionCreate', async (interaction) => {
   if (!interaction.guild) return;
   const guildConfig = client.config.guilds[interaction.guild.id];
