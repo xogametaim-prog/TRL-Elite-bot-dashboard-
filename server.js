@@ -11,12 +11,12 @@ const PORT = process.env.PORT || 3000;
 app.use(express.json());
 app.use(session({
     name: 'luxury_session',
-    secret: 'saas_royal_vault_level_secret_key_2026',
-    resave: false,
-    saveUninitialized: false,
+    secret: process.env.SESSION_SECRET || 'saas_royal_vault_level_secret_key_2026',
+    resave: true,
+    saveUninitialized: true,
     cookie: { 
-        maxAge: 30 * 24 * 60 * 60 * 1000, // 30 Days Persistent Session (Saves login across restarts)
-        secure: false, // Set to true in production with HTTPS
+        maxAge: 30 * 24 * 60 * 60 * 1000, // 30 Days Persistent
+        secure: false, 
         httpOnly: true
     }
 }));
@@ -26,7 +26,6 @@ app.get('/', (req, res) => {
     res.sendFile(path.join(__dirname, 'public', 'index.html'));
 });
 
-// OAuth2 Lightweight Authentication Simulation with absolute persistence
 app.post('/api/auth/login', (req, res) => {
     req.session.user = {
         id: '288467953',
@@ -34,8 +33,6 @@ app.post('/api/auth/login', (req, res) => {
         tag: 'RoyalManager#1337',
         avatar: 'https://cdn.discordapp.com/embed/avatars/0.png'
     };
-    db.data.sessions[req.session.id] = { user: req.session.user, lastActive: Date.now() };
-    db.save();
     res.json({ success: true, user: req.session.user });
 });
 
@@ -51,11 +48,8 @@ app.post('/api/auth/logout', (req, res) => {
     res.json({ success: true });
 });
 
-// Segmenting Discord Servers into exactly the Three mandated UX categories
 app.get('/api/auth/servers', (req, res) => {
-    // Simulated live Discord Servers list returning categorized status:
     const mockServers = [
-        // Category 1: ✅ Installed & User has full manage access
         { 
             id: '1292334668', 
             name: 'سيرفر الإدارة الرئيسي / Elite Server', 
@@ -70,16 +64,15 @@ app.get('/api/auth/servers', (req, res) => {
             status: 'installed', 
             permissions: true 
         },
-        // Category 2: ➕ Not Installed but User has permission to Add Bot
         { 
             id: '5566778899', 
             name: 'سيرفر الألعاب والترفيه / Public Lounge', 
             icon: 'https://cdn.discordapp.com/embed/avatars/3.png',
             status: 'invite', 
             permissions: true,
-            inviteLink: 'https://discord.com/oauth2/authorize?client_id=12345678&scope=bot&permissions=8'
+            // تم تحديث رابط دعوة البوت الحقيقي الخاص بك هنا
+            inviteLink: 'https://discord.com/oauth2/authorize?client_id=1525198327711399967&permissions=8&integration_type=0&scope=bot+applications.commands'
         },
-        // Category 3: 🚫 Locked. User does not have "Manage Server" permissions
         { 
             id: '1122334455', 
             name: 'مجتمع البرمجة العربي / Developer Forum', 
@@ -91,7 +84,6 @@ app.get('/api/auth/servers', (req, res) => {
     res.json({ servers: mockServers });
 });
 
-// SSE Event Broadcast system
 app.get('/api/stream', (req, res) => {
     res.setHeader('Content-Type', 'text/event-stream');
     res.setHeader('Cache-Control', 'no-cache');
@@ -116,14 +108,13 @@ app.get('/api/guilds/:guildId/data', (req, res) => {
         onlineMembers: dGuild ? dGuild.members.cache.filter(m => m.presence?.status !== 'offline').size : 120,
         totalMembers: dGuild ? dGuild.memberCount : 4500,
         uptime: Math.floor(process.uptime()),
-        databaseSize: JSON.stringify(db.data).length,
+        databaseSize: JSON.stringify(guild).length,
         botPing: botClient.ws.ping || 12
     };
 
     res.json({ config: guild, liveStats });
 });
 
-// Persistent State Auto Save Engine (Remembers absolutely everything dynamically)
 app.post('/api/guilds/:guildId/ux-save', (req, res) => {
     const { guildId } = req.params;
     const { uxState } = req.body;
@@ -136,10 +127,9 @@ app.post('/api/guilds/:guildId/save-config', (req, res) => {
     const { key, data } = req.body;
     db.saveGuildConfig(guildId, key, data);
     botEvents.emit('update', { guildId });
-    res.json({ success: true, updated: db.getGuild(guildId) });
+    res.json({ success: true });
 });
 
-// Simulated Exports for Table data
 app.post('/api/export/:type', (req, res) => {
     const { type } = req.params;
     const { data } = req.body;
@@ -151,10 +141,9 @@ app.post('/api/export/:type', (req, res) => {
         res.setHeader('Content-Disposition', 'attachment; filename=tickets-export.csv');
         return res.send(headers + rows);
     }
-    res.json({ success: true, message: 'PDF Generation simulated successfully.' });
+    res.json({ success: true });
 });
 
-// Built-in Country Selector mock database
 app.get('/api/countries', (req, res) => {
     const countries = [
         { code: 'SA', name: 'المملكة العربية السعودية', flag: '🇸🇦', favorite: true },
@@ -169,13 +158,10 @@ app.get('/api/countries', (req, res) => {
     res.json({ countries });
 });
 
-// Royal AI Advisor System Prompt Engine
-app.post('/api/ai/chat', async (req, res) => {
+app.post('/api/ai/chat', (req, res) => {
     const { guildId, question } = req.body;
     const guild = db.getGuild(guildId);
-    db.data.globalStats.aiRequests++;
-    db.save();
-
+    
     let response = `⚜️ **التحليل الفني والحلول المقترحة من الإدارة الذكية للتذاكر:**\n\n`;
     const qLower = question.toLowerCase();
 
@@ -193,8 +179,8 @@ app.post('/api/ai/chat', async (req, res) => {
     res.json({ response });
 });
 
-botClient.login('BOT_TOKEN_PLACEHOLDER').catch(() => {
-    console.log("⚜️ Server is running offline with full simulations at http://localhost:3000");
+botClient.login(process.env.BOT_TOKEN).catch(() => {
+    console.log("⚠️ Failed to login with BOT_TOKEN env. Bot features will remain offline, but dashboard is fully operational.");
 });
 
 app.listen(PORT, () => {
