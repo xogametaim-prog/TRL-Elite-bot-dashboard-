@@ -5,10 +5,6 @@ const path = require('path');
 class DatabaseEngine {
     constructor() {
         this.dbPath = path.join(__dirname, 'data.json');
-        this.backupDir = path.join(__dirname, 'backups');
-        if (!fs.existsSync(this.backupDir)) {
-            fs.mkdirSync(this.backupDir, { recursive: true });
-        }
         this.data = { guilds: {}, sessions: {}, globalStats: { processedMessages: 0, aiRequests: 0 } };
         this.load();
     }
@@ -18,8 +14,7 @@ class DatabaseEngine {
             try {
                 this.data = JSON.parse(fs.readFileSync(this.dbPath, 'utf8'));
             } catch (err) {
-                console.error("Failed to read DB, restoring backup...", err);
-                this.backup('system_recovery');
+                console.error("Error reading database, resetting...", err);
             }
         } else {
             this.save();
@@ -28,11 +23,9 @@ class DatabaseEngine {
 
     save() {
         try {
-            const tempPath = this.dbPath + '.tmp';
-            fs.writeFileSync(tempPath, JSON.stringify(this.data, null, 4), 'utf8');
-            fs.renameSync(tempPath, this.dbPath);
+            fs.writeFileSync(this.dbPath, JSON.stringify(this.data, null, 4), 'utf8');
         } catch (err) {
-            console.error("Critical error saving DB:", err);
+            console.error("Critical error saving database:", err);
         }
     }
 
@@ -76,7 +69,6 @@ class DatabaseEngine {
                 tickets: {},
                 logs: [],
                 backups: [],
-                // Full UX UI State Memory object
                 uxState: {
                     sidebarCollapsed: false,
                     lastPage: 'overview',
@@ -98,23 +90,34 @@ class DatabaseEngine {
         return guild;
     }
 
-    backup(guildId, label = 'system') {
-        const timestamp = new Date().toISOString().replace(/[:.]/g, '-');
-        const backupFileName = `backup_${guildId}_${label}_${timestamp}.json`;
-        const backupPath = path.join(this.backupDir, backupFileName);
-        
-        const guildData = this.getGuild(guildId);
-        fs.writeFileSync(backupPath, JSON.stringify(guildData, null, 4), 'utf8');
-        
-        if (!guildData.backups) guildData.backups = [];
-        guildData.backups.unshift({
-            id: 'backup_' + Date.now(),
-            fileName: backupFileName,
-            label,
+    saveDraft(guildId, userId, page, draftData) {
+        const guild = this.getGuild(guildId);
+        if (!guild.uiDrafts) guild.uiDrafts = {};
+        guild.uiDrafts[userId] = {
+            lastPage: page,
+            data: draftData,
             timestamp: Date.now()
-        });
+        };
         this.save();
-        return backupFileName;
+    }
+
+    getDraft(guildId, userId) {
+        const guild = this.getGuild(guildId);
+        return guild.uiDrafts ? guild.uiDrafts[userId] : null;
+    }
+
+    logAction(guildId, action, details) {
+        const guild = this.getGuild(guildId);
+        const logEntry = {
+            id: 'log_' + Date.now() + '_' + Math.random().toString(36).substr(2, 5),
+            timestamp: Date.now(),
+            action,
+            ...details
+        };
+        guild.logs.unshift(logEntry);
+        if (guild.logs.length > 500) guild.logs.pop();
+        this.save();
+        return logEntry;
     }
 }
 
